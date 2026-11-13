@@ -1,9 +1,9 @@
 Deploy "Cloud 9" (a live quiz web app) to my server over SSH and get it production-ready for an event TOMORROW (~200 concurrent players). Work carefully: this server already runs other workloads that must NOT be disturbed.
 
-Server: ssh root@65.21.181.247  (Hetzner, 4 GB RAM, 2 vCPU, ~1 GB already used)
+Server: ssh root@65.21.181.247  (Hetzner, 4 GB RAM, 2 vCPU, ~1 GB already used). The cloud9 container is allowed up to 2 GB RAM / 2 CPUs (docker-compose.yml); real use is ~130 MB. If free RAM on the box is under 2.5 GB, tell me before starting.
 Repo: git@github.com:twilighty-abhi/cloud9.git (PRIVATE)
 Domain: cloud9.abiramnj.com — DNS is NOT pointed at the server yet; I will add an A record soon (see step 6).
-Moderator accounts I want: <e.g. admin (super), mod1, mod2, mod3>
+Moderator accounts I want: admin (super) only for now — I will add hall moderators later myself (tell me how in the final report).
 
 Read README.md and docs/PLAN.md in the repo first; README has the deploy steps and the event-day runbook.
 
