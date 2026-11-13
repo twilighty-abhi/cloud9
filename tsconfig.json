@@ -12,7 +12,7 @@
     "allowImportingTsExtensions": false,
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": ["node"]
+    "types": ["node", "vite/client"]
   },
-  "include": ["shared", "server/src", "server/test", "web/src", "loadtest", "dev"]
+  "include": ["shared", "server/src", "server/test", "web/src", "web/test", "loadtest", "dev"]
 }

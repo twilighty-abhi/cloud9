@@ -11,6 +11,11 @@ export class FakeRepo implements Repo {
   queue: AnswerRow[] = [];
   sessionUpdates = 0;
 
+  moderatorSessions = new Map<string, number>();
+  saveModeratorSession(id: string, expires: number) { this.moderatorSessions.set(id, expires); }
+  hasModeratorSession(id: string, now: number) { return (this.moderatorSessions.get(id) ?? 0) > now; }
+  deleteModeratorSession(id: string) { this.moderatorSessions.delete(id); }
+
   upsertModerator(m: ModeratorRow) { this.moderators.set(m.id, { ...m }); }
   events = new Map<string, EventDef>();
   listQuizzes(moderatorId: string | null, eventId?: string | 'none'): QuizListItem[] {
@@ -33,7 +38,7 @@ export class FakeRepo implements Repo {
     for (const q of this.quizzes.values()) if (q.eventId === id) q.eventId = null;
     this.events.delete(id);
   }
-  eventLeaderboard(eventId: string): EventLeaderEntry[] {
+  eventLeaderboard(eventId: string, hidePending = false): EventLeaderEntry[] {
     const agg = new Map<string, { key: string; name: string; email: string | null; score: number; sessions: Set<string>; first: number; last: number }>();
     for (const p of this.players.values()) {
       const s = this.sessions.get(p.sessionId);
@@ -42,6 +47,9 @@ export class FakeRepo implements Repo {
       let a = agg.get(key);
       if (!a) { a = { key, name: p.name, email: p.email ? key : null, score: 0, sessions: new Set(), first: p.joinedAt, last: p.joinedAt }; agg.set(key, a); }
       a.score += p.score;
+      if (hidePending && (s.state === 'QUESTION' || s.state === 'CLOSED')) {
+        a.score -= this.answers.find((answer) => answer.playerId === p.id && answer.sessionId === s.id && answer.qIndex === s.qIndex)?.points ?? 0;
+      }
       a.sessions.add(p.sessionId);
       if (p.joinedAt < a.first) a.first = p.joinedAt;
       if (p.joinedAt >= a.last) { a.last = p.joinedAt; a.name = p.name; }
@@ -61,10 +69,13 @@ export class FakeRepo implements Repo {
     Object.assign(s, patch);
     this.sessionUpdates++;
   }
-  listSessions(moderatorId: string | null) {
-    return [...this.sessions.values()].filter((s) => !moderatorId || s.moderatorId === moderatorId).sort((a, b) => b.createdAt - a.createdAt).map((s) => structuredClone(s));
+  listSessions(moderatorId: string | null, eventId?: string) {
+    return [...this.sessions.values()].filter((s) => (!moderatorId || s.moderatorId === moderatorId) && (!eventId || s.eventId === eventId)).sort((a, b) => b.createdAt - a.createdAt).map((s) => structuredClone(s));
   }
   loadUnfinishedSessions() { return [...this.sessions.values()].filter((s) => s.state !== 'FINISHED').map((s) => structuredClone(s)); }
+  loadRecentFinishedSessions(since: number) {
+    return [...this.sessions.values()].filter((s) => s.state === 'FINISHED' && (s.endedAt ?? 0) >= since).map((s) => structuredClone(s));
+  }
   getLatestSessionByCode(code: string) { return this.listSessions(null).find((s) => s.code === code) ?? null; }
 
   insertPlayer(p: PlayerRow) { this.players.set(p.id, { ...p }); }
@@ -76,6 +87,14 @@ export class FakeRepo implements Repo {
   listPlayers(sessionId: string) { return [...this.players.values()].filter((p) => p.sessionId === sessionId).sort((a, b) => a.joinedAt - b.joinedAt).map((p) => ({ ...p })); }
   countPlayers(sessionId: string) { return this.listPlayers(sessionId).filter((p) => !p.kicked).length; }
 
+  recordAnswer(a: AnswerRow) {
+    if (this.answers.some((row) => row.sessionId === a.sessionId && row.playerId === a.playerId && row.questionId === a.questionId)) return false;
+    const p = this.players.get(a.playerId);
+    if (!p || p.sessionId !== a.sessionId || p.kicked) throw new Error('Answer player is missing or kicked');
+    this.answers.push({ ...a });
+    p.score += a.points;
+    return true;
+  }
   queueAnswer(a: AnswerRow) { this.queue.push({ ...a }); }
   listAnswers(sessionId: string) { this.flush(); return this.answers.filter((a) => a.sessionId === sessionId).map((a) => ({ ...a })); }
   flush() {

@@ -34,7 +34,7 @@ export class Registry implements GameRegistry {
   private freshCode(): string {
     for (let i = 0; i < 1000; i++) {
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-      if (!this.rooms.has(code)) return code;
+      if (!this.rooms.has(code) && !this.repo.getLatestSessionByCode(code)) return code;
     }
     throw new Error('could not allocate a room code');
   }
@@ -62,6 +62,12 @@ export class Registry implements GameRegistry {
     const room = this.newRoom(row, event);
     this.rooms.set(room.code, room);
     return room.summary();
+  }
+
+  refreshEvent(id: string, event: EventDef | null): void {
+    for (const room of this.rooms.values()) {
+      if (room.eventId === id) room.refreshEvent(event);
+    }
   }
 
   liveCountByEvent(): Map<string, number> {
@@ -98,24 +104,21 @@ export class Registry implements GameRegistry {
     const r = this.rooms.get(code);
     if (!r) return { ok: false, error: 'not_found' };
     if (r.state === 'FINISHED') return { ok: false, error: 'finished' };
-    const name = cleanName(req?.name);
-    const em = checkEmail(req?.email, r.emailMode);
-    // Same email already in this room → rebind to that player (fresh token, keeps name/score); kicked stays kicked.
-    // Checked before join_closed / room_full: the person is already a member of this room.
-    if (name && em.ok && em.email) {
-      const existing = r.findByEmail(em.email);
+    const tokenToResume = req?.token;
+    if (tokenToResume && tokenToResume.length <= 200) {
+      const existing = r.findByTokenHash(sha256Hex(tokenToResume));
       if (existing) {
         if (existing.kicked) return { ok: false, error: 'kicked' };
-        const token = randomBytes(24).toString('base64url');
-        const tokenHash = sha256Hex(token);
-        this.repo.updatePlayer(existing.id, { tokenHash });
-        r.rebindToken(existing, tokenHash);
-        return { ok: true, playerId: existing.id, token, name: existing.name, rejoined: true };
+        return { ok: true, playerId: existing.id, token: tokenToResume, name: existing.name, rejoined: true };
       }
     }
+    const name = cleanName(req?.name);
+    const em = checkEmail(req?.email, r.emailMode);
     if (!r.joinOpen) return { ok: false, error: 'join_closed' };
     if (!name) return { ok: false, error: 'invalid_name' };
     if (!em.ok) return { ok: false, error: em.error };
+    const existingEmail = em.email ? r.findByEmail(em.email) : null;
+    if (existingEmail) return { ok: false, error: existingEmail.kicked ? 'kicked' : 'email_in_use' };
     if (r.activeCount() >= this.config.maxPlayersPerRoom) return { ok: false, error: 'room_full' };
 
     const display = dedupeName(name, r.nameKeys);
@@ -149,7 +152,8 @@ export class Registry implements GameRegistry {
 
   restore(): number {
     let n = 0;
-    for (const s of this.repo.loadUnfinishedSessions()) {
+    const recent = this.repo.loadRecentFinishedSessions(Date.now() - EVICT_AFTER_MS);
+    for (const s of [...this.repo.loadUnfinishedSessions(), ...recent]) {
       try {
         if (this.rooms.has(s.code)) continue;
         let event: EventDef | null = null;

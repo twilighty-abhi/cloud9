@@ -275,12 +275,12 @@ else:
 
 ## 12. Reliability & reconnects
 
-- **Player token**: random 32 bytes, stored in `localStorage` per room code. Only a hash is stored on the server. Reconnecting with the token re-binds to the same player with the same score.
+- **Player token**: random 24 bytes, stored in `localStorage` per room code. Only a hash is stored on the server. Reconnecting with the token restores the same player and score. Email groups event scores and does not grant access to a previous player entry.
 - **Snapshot on connect**: every (re)connection gets a full `state` message, so the client never depends on missed events.
 - **Client reconnect**: exponential backoff (0.5 s → 5 s max, with jitter); reconnects immediately on `visibilitychange` / `online` events.
 - **Heartbeats**: the server pings every 20 s and drops dead sockets after 2 missed pings.
 - **Moderator from several devices**: multiple mod sockets per room are allowed (e.g. laptop + phone).
-- **Server restart**: on boot, non-finished sessions are rebuilt from SQLite into memory (state, current question, scores). An open question is moved to `CLOSED` so the moderator can continue.
+- **Server restart**: on boot, non-finished sessions and results from the last six hours are rebuilt from SQLite into memory. An open question is moved to `CLOSED` so the moderator can continue.
 - **Crash safety**: every inbound message is schema-validated inside try/catch, plus process-level handlers. Docker uses `restart: unless-stopped`.
 - **Duplicate names**: allowed, but suffixed for display (`Anu`, `Anu (2)`).
 
@@ -288,9 +288,9 @@ else:
 
 ## 13. Security
 
-- Moderator passwords from env, hashed with scrypt at boot. Session cookie is signed, `httpOnly`, `SameSite=Lax`, `Secure`.
+- Moderator passwords from env, hashed with scrypt at boot. Session cookies are signed, revocable, `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS.
 - Moderators can act only on rooms they own (super-admin can act on all).
-- Rate limits: join 10/min/IP; answer 1 per question per player (anything extra is dropped); WS messages 20/s/socket (above that, disconnect).
+- Rate limits: join 1000/min/IP by default; answer 1 per question per player (anything extra is dropped); WS messages 20/s/socket (above that, disconnect).
 - Name max 24 chars, email max 120 chars and format-checked, all output escaped (Preact escapes by default).
 - Room codes are 6 random digits; join requires the room to be in `LOBBY` (late join allowed, toggle on by default, scoring 0 for missed questions).
 - No player PII in logs. The CSV export (which includes emails) requires the moderator's auth.

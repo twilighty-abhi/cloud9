@@ -10,7 +10,7 @@ import { Brand } from '../../lib/brand';
 export const fxMeOr = () => fxMe;
 
 /** Active dev fixture name (?fixture=…) or null. */
-export const fixture: string | null = (() => { try { return query('fixture'); } catch { return null; } })();
+export const fixture: string | null = import.meta.env.DEV ? query('fixture') : null;
 
 /** Read a query param (fixture mode can fake some). */
 export function param(name: string): string | null {

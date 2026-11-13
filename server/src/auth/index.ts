@@ -15,7 +15,7 @@ const scrypt = (pw: string, salt: Buffer) => scryptSync(pw, salt, SCRYPT_LEN, { 
 
 /** Minimal Cookie header parser (first occurrence wins). */
 export function parseCookieHeader(header: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   if (!header) return out;
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
@@ -47,18 +47,21 @@ export function createAuth(config: Config, repo: Repo): AuthService {
 
   const sign = (payload: string) => createHmac('sha256', config.sessionSecret).update(payload).digest('base64url');
 
-  function verifyToken(value: string | undefined): Me | null {
+  const logoutListeners = new Set<(cookieValue: string) => void>();
+
+  function readToken(value: string | undefined): { me: Me; session: string } | null {
     if (!value || value.length > 1024) return null;
     const dot = value.lastIndexOf('.');
     if (dot <= 0) return null;
     const payload = value.slice(0, dot);
-    const sig = Buffer.from(value.slice(dot + 1), 'base64url');
-    const expected = Buffer.from(sign(payload), 'base64url');
+    const sig = Buffer.from(value.slice(dot + 1));
+    const expected = Buffer.from(sign(payload));
     if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) return null;
     try {
-      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { id?: unknown; exp?: unknown };
-      if (typeof data.id !== 'string' || typeof data.exp !== 'number' || data.exp < Date.now()) return null;
-      return byId.get(data.id)?.me ?? null; // removed moderators are logged out
+      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { id?: unknown; exp?: unknown; session?: unknown };
+      if (typeof data.id !== 'string' || typeof data.exp !== 'number' || data.exp <= Date.now() || typeof data.session !== 'string') return null;
+      const me = byId.get(data.id)?.me;
+      return me && repo.hasModeratorSession(data.session, Date.now()) ? { me, session: data.session } : null;
     } catch {
       return null;
     }
@@ -73,15 +76,28 @@ export function createAuth(config: Config, repo: Repo): AuthService {
       return ok && acc ? acc.me : null;
     },
     issueCookieValue(me) {
-      const payload = Buffer.from(JSON.stringify({ id: me.id, exp: Date.now() + SESSION_TTL_MS })).toString('base64url');
+      const session = randomBytes(24).toString('base64url');
+      const exp = Date.now() + SESSION_TTL_MS;
+      repo.saveModeratorSession(session, exp);
+      const payload = Buffer.from(JSON.stringify({ id: me.id, exp, session })).toString('base64url');
       return `${payload}.${sign(payload)}`;
     },
+    logout(cookieHeader) {
+      const value = parseCookieHeader(cookieHeader)[COOKIE_NAME];
+      const token = readToken(value);
+      if (!token) return;
+      repo.deleteModeratorSession(token.session);
+      for (const listener of logoutListeners) listener(value);
+    },
+    onLogout(listener) {
+      logoutListeners.add(listener);
+      return () => { logoutListeners.delete(listener); };
+    },
     moderatorFromCookieHeader(cookieHeader) {
-      return verifyToken(parseCookieHeader(cookieHeader)[COOKIE_NAME]);
+      return readToken(parseCookieHeader(cookieHeader)[COOKIE_NAME])?.me ?? null;
     },
     moderatorFromRequest(req: FastifyRequest) {
-      const fromPlugin = (req as FastifyRequest & { cookies?: Record<string, string | undefined> }).cookies?.[COOKIE_NAME];
-      return verifyToken(fromPlugin ?? parseCookieHeader(req.headers.cookie)[COOKIE_NAME]);
+      return svc.moderatorFromCookieHeader(req.headers.cookie);
     },
     getModerator(id) {
       return byId.get(id)?.me ?? null;

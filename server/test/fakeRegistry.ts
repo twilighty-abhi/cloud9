@@ -45,6 +45,13 @@ export class FakeRegistry implements GameRegistry {
       .filter((r) => r.summary.listed && r.summary.state !== 'FINISHED')
       .map(({ summary: s }) => ({ code: s.code, eventName: s.eventName, title: s.title, label: s.label, state: s.state, qIndex: s.qIndex, total: s.total, players: s.players, joinOpen: s.joinOpen }));
   }
+  refreshEvent(id: string, event: EventDef | null) {
+    for (const room of this.rooms.values()) {
+      if (room.summary.eventId !== id) continue;
+      room.event = event;
+      room.summary.eventName = event?.name ?? null;
+    }
+  }
   playInfo(code: string): PlayInfo | null {
     const r = this.rooms.get(code);
     if (!r) return null;
@@ -57,7 +64,7 @@ export class FakeRegistry implements GameRegistry {
     if (r.summary.state === 'FINISHED') return { ok: false, error: 'finished' };
     if (req.email === 'kicked@x.test') return { ok: false, error: 'kicked' };
     const prev = req.email ? r.emails.get(req.email.toLowerCase()) : undefined;
-    if (prev) return { ok: true, playerId: prev, token: randomBytes(16).toString('base64url'), name: req.name, rejoined: true };
+    if (prev) return { ok: false, error: 'email_in_use' };
     if (!r.summary.joinOpen) return { ok: false, error: 'join_closed' };
     if (r.names.length >= r.capacity) return { ok: false, error: 'room_full' };
     const name = (req.name ?? '').trim();

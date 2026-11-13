@@ -4,6 +4,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket, type RawData } from 'ws';
 import { WS_CLOSE } from '../../../shared/protocol';
 import type { AuthService } from '../contracts';
+import { COOKIE_NAME, parseCookieHeader } from '../auth/index';
 import type { Registry } from '../game/registry';
 import { sha256Hex } from '../game/registry';
 import type { PlayerMem, Room } from '../game/room';
@@ -20,6 +21,7 @@ interface Ctx {
   room: Room;
   role: 'player' | 'mod' | 'present';
   player: PlayerMem | null;
+  cookie: string | undefined;
   tokens: number;
   lastRefill: number;
   missed: number;
@@ -28,10 +30,18 @@ interface Ctx {
 
 export interface Realtime { close(): void }
 
-export function attachRealtime(server: Server, auth: AuthService, registry: Registry, opts: { heartbeatMs?: number } = {}): Realtime {
+export function attachRealtime(server: Server, auth: AuthService, registry: Registry, opts: { heartbeatMs?: number; allowedOrigins?: readonly string[] } = {}): Realtime {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_PAYLOAD, clientTracking: false });
   const live = new Set<Ctx>();
   let shuttingDown = false;
+  const unsubscribeLogout = auth.onLogout((value) => {
+    for (const ctx of live) {
+      if (ctx.role === 'mod' && parseCookieHeader(ctx.cookie)[COOKIE_NAME] === value) {
+        ctx.room.detachHost(ctx.ws);
+        safeClose(ctx.ws, WS_CLOSE.UNAUTHORIZED, 'unauthorized');
+      }
+    }
+  });
 
   wss.on('error', (e) => console.error('[ws] server error', e));
 
@@ -91,6 +101,11 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
         return;
       }
     } else if (role === 'mod') {
+      if (req.headers.origin !== undefined && !opts.allowedOrigins?.includes(req.headers.origin)) {
+        sendError(ws, 'unauthorized', 'Untrusted moderator origin');
+        safeClose(ws, WS_CLOSE.UNAUTHORIZED, 'unauthorized');
+        return;
+      }
       const me = auth.moderatorFromCookieHeader(req.headers.cookie);
       if (!me || (me.id !== room.moderatorId && !me.isSuper)) {
         sendError(ws, 'unauthorized', 'Not a moderator of this room');
@@ -103,7 +118,7 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
       return;
     }
 
-    const ctx: Ctx = { ws, room, role, player, tokens: RATE_PER_SEC, lastRefill: Date.now(), missed: 0, closed: false };
+    const ctx: Ctx = { ws, room, role, player, cookie: role === 'mod' ? req.headers.cookie : undefined, tokens: RATE_PER_SEC, lastRefill: Date.now(), missed: 0, closed: false };
     live.add(ctx);
 
     ws.on('pong', () => { ctx.missed = 0; });
@@ -152,6 +167,13 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
     const msg = parseClientMsg(raw);
     if (!msg) { sendError(ws, 'bad_message', 'Invalid message'); return; }
 
+    if (ctx.role === 'mod' && !auth.moderatorFromCookieHeader(ctx.cookie)) {
+      room.detachHost(ws);
+      sendError(ws, 'unauthorized', 'Moderator session expired');
+      safeClose(ws, WS_CLOSE.UNAUTHORIZED, 'unauthorized');
+      return;
+    }
+
     switch (msg.t) {
       case 'ping':
         sendMsg(ws, { t: 'pong', serverNow: Date.now() });
@@ -197,6 +219,7 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
     close() {
       shuttingDown = true;
       clearInterval(heartbeat);
+      unsubscribeLogout();
       server.off('upgrade', onUpgrade);
       for (const ctx of live) safeClose(ctx.ws, 1001, 'shutdown');
       try { wss.close(); } catch { /* ignore */ }

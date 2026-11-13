@@ -12,7 +12,9 @@ npm run dev:web        # Vite dev server for the UI (proxies /api and /ws to :30
 npm test               # unit + integration tests
 ```
 
-Production build: `npm run build && npm start` (serves `dist/web` + `dist/server.mjs`).
+Production build: `npm run build`. Start the built app with `npm start` and explicit `MODERATORS`
+and `SESSION_SECRET` values. Docker Compose reads these from `.env`. A direct host process reads its environment.
+Run browser tests with `npx playwright install chromium webkit` followed by `npm run test:browser`.
 
 ## Deploy on the Hetzner box
 
@@ -39,9 +41,15 @@ Then pick **one** way to expose it:
 | **Direct IP** (testing only) | In `docker-compose.yml` change the port to `"3000:3000"`, set `PUBLIC_URL=http://<server-ip>:3000`, `docker compose up -d`, open `http://<server-ip>:3000`. Revert before the event (plain HTTP, no Secure cookies). |
 
 `PUBLIC_URL` must be the exact URL players open: join links and QR codes are built from it.
-Changing `.env` needs `docker compose up -d` (recreates the container), not just `restart`.
+Changing `.env` requires `docker compose up -d` to recreate the container. The bundled Caddy
+profile trusts its fixed proxy address. For a host proxy set `TRUSTED_PROXY` to the immediate peer
+address seen inside the app, typically the Compose bridge gateway (`10.203.91.1` by default) for
+host Nginx. A directly exposed app should set `TRUSTED_PROXY=` and use direct client addresses.
+Keep the app port private for production and configure the proxy to replace client-supplied
+`X-Forwarded-For`. If the default Compose subnet overlaps another network, set
+`CLOUD9_DOCKER_SUBNET`, `CLOUD9_DOCKER_DYNAMIC_RANGE`, `CLOUD9_DOCKER_GATEWAY` and `CADDY_PROXY_IP` together.
 
-Update to a new version: `git pull && docker compose up -d --build`. Live rooms are restored from SQLite on boot.
+Update to a new version: `git pull && docker compose up -d --build`. Live rooms and finished results from the last six hours are restored on boot. Moderators sign in again once after upgrading from a release with stateless cookies.
 
 Resource limits (compose): 2 GB RAM, 2 CPUs, Node heap up to 1.5 GB (real use ~130 MB at 250 players), logs rotated at 10 MB × 3.
 
@@ -80,8 +88,8 @@ server RSS < 250 MB, no score drift after reconnects, all rooms finish. Watch `d
 for CPU (target < 70 % of one core).
 
 Notes:
-- Target the app **directly** (`127.0.0.1:3000`), not through Caddy/Nginx: bots send a fake `X-Forwarded-For`
-  per player to get past the join rate limit (`JOIN_RATE_PER_MIN`, default 1000/min/IP), and proxies replace that header.
+- The standard scenarios fit under the default `JOIN_RATE_PER_MIN=1000`. Use `--no-xff` against the app
+  directly or through the proxy. For a larger run from one load generator, raise the join limit on a disposable instance.
 - Best run from your laptop through an SSH tunnel so the bots don't steal the server's CPU:
   `ssh -L 3000:127.0.0.1:3000 user@server`, then use `--url http://localhost:3000`.
 - Each run creates real quizzes/sessions named "Load test …" (unlisted). Run it before the event, then back up
@@ -130,5 +138,5 @@ curl -s localhost:3000/healthz          # rooms / sockets / rssMb
 ## Configuration
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
-(`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
+(`user:pass[:super],…`), `TRUSTED_PROXY`, `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
 `PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container.

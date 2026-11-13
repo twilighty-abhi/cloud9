@@ -42,8 +42,8 @@ export class Room {
   readonly moderatorId: string;
   readonly createdAt: number;
   readonly eventId: string | null;
-  readonly eventName: string | null;
-  readonly eventEmailRequired: boolean;
+  eventName: string | null;
+  private eventEmailRequired: boolean;
   label: string;
   listed: boolean;
   joinOpen: boolean;
@@ -128,10 +128,12 @@ export class Room {
     return kicked;
   }
 
-  /** Rejoin by email: register a fresh token for an existing player (the previous token keeps working in memory). */
-  rebindToken(p: PlayerMem, tokenHash: string): void {
-    p.tokenHash = tokenHash;
-    this.byToken.set(tokenHash, p);
+  refreshEvent(event: EventDef | null): void {
+    this.eventName = event?.name ?? null;
+    this.eventEmailRequired = event?.emailRequired ?? false;
+    this.eventCache = null;
+    this.v++;
+    this.broadcastState();
   }
 
   /** Event identity key for a player (matches repo.eventLeaderboard keys). */
@@ -149,7 +151,7 @@ export class Room {
     const c = this.eventCache;
     if (!fresh && c && c.v === this.v && now - c.at < EVENT_BOARD_REUSE_MS) return c;
     try {
-      const list = this.repo.eventLeaderboard(this.eventId);
+      const list = this.repo.eventLeaderboard(this.eventId, true);
       const byKey = new Map<string, EventLeaderEntry>();
       for (const e of list) byKey.set(e.key, e);
       this.eventCache = { v: this.v, at: now, list, byKey };
@@ -510,14 +512,18 @@ export class Room {
     const responseMs = Math.max(0, now - this.qStartedAt);
     const correct = choice === q.correctIndex;
     const points = scoreAnswer({ correct, responseMs, timeLimitSec: q.timeLimitSec, pointsMax: q.pointsMax, scoring: this.quiz.scoring });
+    const row: AnswerRow = { sessionId: this.id, playerId: p.id, questionId: q.id, qIndex, choice, correct, responseMs, points, answeredAt: now };
+    try {
+      if (!this.repo.recordAnswer(row)) return fail('already_answered', 'Already answered');
+    } catch (error) {
+      console.error(`[game] answer could not be saved (room ${this.code})`, error);
+      return fail('storage_unavailable', 'Your answer could not be saved. Please try again.');
+    }
+
     p.answers.set(qIndex, { choice, correct, points, responseMs });
     p.score += points;
     this.answered++;
     if (choice < this.distribution.length) this.distribution[choice]++;
-
-    if (points) this.safeRepo('updatePlayer', () => this.repo.updatePlayer(p.id, { score: p.score }));
-    const row: AnswerRow = { sessionId: this.id, playerId: p.id, questionId: q.id, qIndex, choice, correct, responseMs, points, answeredAt: now };
-    this.safeRepo('queueAnswer', () => this.repo.queueAnswer(row));
 
     const ack = JSON.stringify({ t: 'ack', v: this.v, qIndex, choice } satisfies ServerMsg);
     for (const ws of p.sockets) sendRaw(ws, ack);

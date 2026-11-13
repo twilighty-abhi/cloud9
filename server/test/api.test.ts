@@ -342,7 +342,7 @@ test('sessions: create, list, patch, qr, public list, play + join mapping, expor
 
     // rate limit 10/min/IP
     const codes: number[] = [];
-    for (let i = 0; i < 12; i++) codes.push((await t.req('POST', `/api/play/${rq.code}/join`, undefined, { name: `R${i}`, email: 'r@x.io' }, '8.8.8.8')).statusCode);
+    for (let i = 0; i < 12; i++) codes.push((await t.req('POST', `/api/play/${rq.code}/join`, undefined, { name: `R${i}`, email: `r${i}@x.io` }, '8.8.8.8')).statusCode);
     assert.deepEqual(codes.slice(0, 10), Array(10).fill(200));
     assert.deepEqual(codes.slice(10), [429, 429]);
     const rl = await t.req('POST', `/api/play/${rq.code}/join`, undefined, { name: 'z' }, '8.8.8.8');
@@ -503,8 +503,8 @@ test('events: quizzes eventId filter + invalid_event, sessions carry event, lead
     assert.equal(j1.statusCode, 200);
     assert.equal(j1.json().rejoined, false);
     const j2 = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'Anu', email: 'ANU@x.test' }, '10.9.0.1');
-    assert.equal(j2.json().rejoined, true);
-    assert.equal(j2.json().playerId, j1.json().playerId);
+    assert.equal(j2.statusCode, 409);
+    assert.equal(j2.json().error, 'email_in_use');
     const jk = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'K', email: 'kicked@x.test' }, '10.9.0.1');
     assert.equal(jk.statusCode, 403);
     assert.equal(jk.json().error, 'kicked');

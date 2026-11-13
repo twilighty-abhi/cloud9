@@ -43,7 +43,7 @@ const eventIdField = z.union([z.string().min(1).max(100), z.null()]).optional();
 const quizBodySchema = quizInputSchema.extend({ eventId: eventIdField });
 const eventInputSchema = z.object({
   name: z
-    .string({ required_error: 'name is required' })
+    .string({ error: (issue) => issue.input === undefined ? 'name is required' : undefined })
     .transform((s) => s.replace(/\s+/g, ' ').trim())
     .pipe(z.string().min(1, 'name is empty').max(80, 'name is longer than 80 characters')),
   emailRequired: z.boolean().optional(),
@@ -56,7 +56,7 @@ const importSchema = z.object({
   emailMode: emailModeSchema.optional(),
   scoring: scoringSchema.optional(),
 });
-const joinSchema = z.object({ name: z.unknown(), email: z.unknown().optional() });
+const joinSchema = z.object({ name: z.unknown(), email: z.unknown().optional(), token: z.string().max(200).optional() });
 
 class HttpError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -65,8 +65,8 @@ const fail = (status: number, code: string, message: string): never => { throw n
 
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown, code = 'invalid_input'): z.output<T> {
   const r = schema.safeParse(body ?? {});
-  if (!r.success) fail(400, code, zodMessage(r.error));
-  return (r as z.SafeParseSuccess<z.output<T>>).data;
+  if (!r.success) return fail(400, code, zodMessage(r.error));
+  return r.data;
 }
 
 const JOIN_ERRORS: Record<string, [number, string]> = {
@@ -77,6 +77,7 @@ const JOIN_ERRORS: Record<string, [number, string]> = {
   email_required: [400, 'Email is required for this quiz'],
   invalid_name: [400, 'Please enter a valid name (1–24 characters)'],
   invalid_email: [400, 'Please enter a valid email address'],
+  email_in_use: [409, 'This email has already joined. Reconnect from the browser you used to join.'],
   kicked: [403, 'You were removed from this quiz'],
 };
 
@@ -167,7 +168,8 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return me;
   });
 
-  api.post('/api/auth/logout', async (_req, reply) => {
+  api.post('/api/auth/logout', async (req, reply) => {
+    auth.logout(req.headers.cookie);
     reply.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, sameSite: 'lax', secure: config.secureCookies });
     return { ok: true };
   });
@@ -321,13 +323,12 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     requireMe(req);
     const event = loadEvent(req.params.id);
     const quizzes = repo.listQuizzes(null, event.id);
-    // Sessions of this event: live/in-memory rooms first-class, plus persisted history (Repo has no by-event query,
-    // so we filter the newest persisted sessions; in-memory rooms cover everything from the last 6h regardless).
+    // Query this event before limiting persisted history. Live rooms contribute their current summaries.
     const byId = new Map<string, SessionSummary>();
     for (const s of registry.listSummaries()) if (s.eventId === event.id) byId.set(s.id, s);
     const nameOf = eventNamer();
-    for (const row of repo.listSessions(null)) {
-      if (row.eventId !== event.id || byId.has(row.id)) continue;
+    for (const row of repo.listSessions(null, event.id)) {
+      if (byId.has(row.id)) continue;
       const live = registry.summary(row.code);
       byId.set(row.id, live && live.id === row.id ? live : summaryFromRow(row, nameOf));
     }
@@ -347,6 +348,8 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       updatedAt: Math.max(Date.now(), existing.updatedAt + 1),
     };
     repo.saveEvent(event);
+    registry.refreshEvent(event.id, event);
+    publicCache = null;
     eventBoardCache.delete(event.id);
     return event;
   });
@@ -356,6 +359,8 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     const existing = loadEvent(req.params.id);
     if (!canAccess(me, existing.moderatorId)) fail(403, 'forbidden', 'Only the event creator can delete this event');
     repo.deleteEvent(existing.id);
+    registry.refreshEvent(existing.id, null);
+    publicCache = null;
     eventBoardCache.delete(existing.id);
     return { ok: true };
   });
@@ -431,7 +436,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     let hit = eventBoardCache.get(id);
     if (!hit || now - hit.at > PUBLIC_CACHE_MS) {
       const event = loadEvent(id);
-      const list = repo.eventLeaderboard(event.id);
+      const list = repo.eventLeaderboard(event.id, true);
       const data: PublicEventBoard = {
         eventName: event.name,
         top: list.slice(0, 10).map((e) => ({ name: e.name, score: e.score, rank: e.rank, quizzesPlayed: e.quizzesPlayed })),
@@ -473,7 +478,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       email = typeof body.email === 'string' ? body.email.slice(0, 300) : fail(400, 'invalid_email', JOIN_ERRORS.invalid_email[1]);
       if (email.trim() === '') email = undefined;
     }
-    const res = registry.join(code, { name, email });
+    const res = registry.join(code, { name, email, token: body.token });
     if (!res.ok) {
       const [status, message] = JOIN_ERRORS[res.error] ?? [400, 'Could not join'];
       fail(status, res.error, message);

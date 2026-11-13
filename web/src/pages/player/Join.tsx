@@ -18,6 +18,7 @@ function friendly(e: unknown): { field?: 'name' | 'email'; msg: string; fatal?: 
       case 'finished': return { msg: 'This quiz has ended.', fatal: 'finished' };
       case 'join_closed': return { msg: 'Joining is closed for this quiz.', fatal: 'closed' };
       case 'room_full': return { msg: 'This quiz is full right now. Ask the host for help.' };
+      case 'email_in_use': return { field: 'email', msg: 'This email already joined. Reconnect using the browser you joined with.' };
       case 'email_required': return { field: 'email', msg: 'Add your email to join this quiz.' };
       case 'invalid_email': return { field: 'email', msg: "That email doesn't look right. Check it and try again." };
       case 'invalid_name': return { field: 'name', msg: `Enter a name, up to ${DEFAULTS.nameMax} characters.` };

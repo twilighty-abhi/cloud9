@@ -6,8 +6,8 @@
 // Scenarios (PLAN §18): A = 1 room × 250, B = 5 rooms × 50, C = B + 20% churn. Explicit flags override the preset.
 // --event (default ON for C, --no-event to disable): one event holds every room's quiz; bots join with unique emails
 // (bot-<n>@load.test) and ~10% reuse an email from the previous room, so the event leaderboard has to aggregate them.
-// Joins send a distinct X-Forwarded-For per bot (join is rate-limited per IP; server trusts proxy headers),
-// so point --url straight at the app (127.0.0.1:3000 or an SSH tunnel), not through Caddy, which rewrites XFF.
+// By default the runner adds a distinct X-Forwarded-For per bot.
+// Use --no-xff for normal local runs. Cloud 9 only honors X-Forwarded-For from a configured proxy.
 // Exit code 0 = PASS, 1 = FAIL. JSON report: loadtest/last-report.json
 
 import WebSocket from 'ws';
@@ -35,7 +35,7 @@ const HELP = `Cloud 9 load test
   --pause <ms>         moderator pause between reveal/leaderboard/next (default 400)
   --deadline <sec>     hard stop (default: computed)
   --event / --no-event put all rooms in one event, bots join with emails (default: on for C)
-  --no-xff             don't send X-Forwarded-For on joins
+  --no-xff             don't send X-Forwarded-For on joins (recommended for standard deployment)
   --quiet              less progress output`;
 
 type Args = Record<string, string | true>;
@@ -762,7 +762,11 @@ function finish(reason: string): never | void {
     at: new Date().toISOString(),
     pass,
     reason,
-    options: { ...opts, scenario },
+    options: {
+      scenario, url: opts.url, rooms: opts.rooms, players: opts.players, questions: opts.questions,
+      time: opts.time, churn: opts.churn, rampMs: opts.rampMs, staggerMs: opts.staggerMs,
+      pauseMs: opts.pauseMs, deadlineMs: opts.deadlineMs, event: opts.event, xff: opts.xff,
+    },
     criteria: CRITERIA,
     checks,
     latency: { ackMs: ack, fanoutMs: fan, joinMs: { p50: pct(M.joinLatMs, 50), p95: pct(M.joinLatMs, 95) }, eventBoardMs: evLat, publicEventBoardMs: pubLat },

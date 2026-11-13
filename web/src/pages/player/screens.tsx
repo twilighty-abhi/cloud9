@@ -8,7 +8,7 @@ import { linkClick } from '../../lib/router';
 import { LiveShell, Message, fmtNum } from './parts';
 import { IconCheck, IconX, IconMinus, IconLock, IconClock, IconUsers } from './icons';
 
-export interface ConnLike { status: ConnStatus; now: () => number; send: (m: ClientMsg) => boolean }
+export interface ConnLike { status: ConnStatus; now: () => number; send: (m: ClientMsg) => boolean; lastError?: { code: string; message: string } | null }
 type Picked = { qIndex: number; choice: number } | null;
 
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -16,6 +16,13 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike }) {
   const [picked, setPicked] = useState<Picked>(null);
   const q = snap.question;
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  useEffect(() => {
+    if (conn.lastError?.code !== 'storage_unavailable') return;
+    setPicked(null);
+    setAnswerError(conn.lastError.message);
+  }, [conn.lastError]);
+  useEffect(() => { setAnswerError(null); }, [q?.qIndex]);
 
   // If the tap happened while offline (or the socket dropped before the ack), resend once we're back.
   useEffect(() => {
@@ -26,6 +33,7 @@ export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike 
 
   const answer = (choice: number) => {
     if (!q) return;
+    setAnswerError(null);
     setPicked({ qIndex: q.qIndex, choice });
     try { navigator.vibrate?.(30); } catch { /* not supported */ }
     conn.send({ t: 'answer', qIndex: q.qIndex, choice });
@@ -37,7 +45,7 @@ export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike 
   let tone: string | undefined;
   switch (snap.state) {
     case 'LOBBY': body = <Lobby snap={snap} />; break;
-    case 'QUESTION': body = q ? <Question snap={snap} conn={conn} myChoice={myChoice} onAnswer={answer} /> : <Lobby snap={snap} />; break;
+    case 'QUESTION': body = q ? <>{answerError && <p role="alert">{answerError}</p>}<Question snap={snap} conn={conn} myChoice={myChoice} onAnswer={answer} /></> : <Lobby snap={snap} />; break;
     case 'CLOSED': body = <Closed snap={snap} myChoice={myChoice} />; break;
     case 'REVEAL': {
       const r = snap.reveal;

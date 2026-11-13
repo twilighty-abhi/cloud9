@@ -11,7 +11,7 @@ export const createGame: CreateGame = ({ repo, config }): Game => {
     registry,
     attach(server: Server, auth: AuthService) {
       if (realtime) return;
-      realtime = attachRealtime(server, auth, registry);
+      realtime = attachRealtime(server, auth, registry, { allowedOrigins: config.allowedOrigins ?? [new URL(config.publicUrl).origin] });
     },
     shutdown() {
       try { realtime?.close(); } catch (e) { console.error('[game] realtime close failed', e); }
