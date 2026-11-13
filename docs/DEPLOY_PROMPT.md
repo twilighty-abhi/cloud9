@@ -1,7 +1,7 @@
 Deploy "Cloud 9" (a live quiz web app) to my server over SSH and get it production-ready for an event TOMORROW (~200 concurrent players). Work carefully: this server already runs other workloads that must NOT be disturbed.
 
 Server: ssh root@65.21.181.247  (Hetzner, 4 GB RAM, 2 vCPU, ~1 GB already used). The cloud9 container is allowed up to 2 GB RAM / 2 CPUs (docker-compose.yml); real use is ~130 MB. If free RAM on the box is under 2.5 GB, tell me before starting.
-Repo: git@github.com:twilighty-abhi/cloud9.git (PRIVATE)
+Repo: https://github.com/twilighty-abhi/cloud9.git (public)
 Domain: cloud9.abiramnj.com — DNS is NOT pointed at the server yet; I will add an A record soon (see step 6).
 Moderator accounts I want: admin (super) only for now — I will add hall moderators later myself (tell me how in the final report).
 
@@ -10,7 +10,7 @@ Read README.md and docs/PLAN.md in the repo first; README has the deploy steps a
 Steps:
 1. Recon (read-only first): OS, `docker --version`, `docker compose version`, free RAM/disk, `docker ps` (list what's already running), and what is listening on 80/443/3000 (`ss -ltnp`). Tell me what you found before changing anything. Do NOT stop, restart, or modify any existing container, service, or proxy config without asking me.
 2. Install Docker + compose plugin only if missing.
-3. Clone to /opt/cloud9. The repo is private: create a read-only deploy key on the server (`ssh-keygen -t ed25519 -f ~/.ssh/cloud9_deploy -N ""`), show me the public key and wait for me to add it at GitHub → repo → Settings → Deploy keys, then clone using that key (GIT_SSH_COMMAND or ~/.ssh/config Host alias).
+3. Clone to /opt/cloud9: `git clone https://github.com/twilighty-abhi/cloud9.git /opt/cloud9` (public repo, no key needed).
 4. Create /opt/cloud9/.env from .env.example:
    - PUBLIC_URL = http://65.21.181.247:3000 for now (QR codes and join links use it). Switch to https://cloud9.abiramnj.com in step 6b once DNS works.
    - SESSION_SECRET = `openssl rand -hex 32`
@@ -30,6 +30,6 @@ Steps:
    `npx tsx loadtest/bots.ts --url http://127.0.0.1:3000 --user admin --pass <admin-pass> --scenario C`
    while watching `docker stats` in parallel. Report the PASS/FAIL table plus peak CPU % and RAM of the cloud9 container AND confirm the other workloads stayed healthy.
 9. Back up the DB once (command in README runbook) and add a nightly cron backup to /opt/cloud9/data/backups (keep 7).
-10. Final report: URL(s), moderator credentials, how to view logs / restart / update (`git pull && docker compose up -d --build`), load test numbers, and anything I must do by hand (DNS, Hetzner firewall, deploy key).
+10. Final report: URL(s), moderator credentials, how to view logs / restart / update (`git pull && docker compose up -d --build`), load test numbers, and anything I must do by hand (DNS, Hetzner firewall).
 
 Safety: never run `docker system prune`, never remove volumes, never edit other apps' configs without showing me the change first, and ask before anything irreversible.
