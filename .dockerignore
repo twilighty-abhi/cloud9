@@ -1,0 +1,16 @@
+node_modules
+dist
+data
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+loadtest/last-report.json
+docs
+npm-debug.log*
+.DS_Store
+test-results
+playwright-report

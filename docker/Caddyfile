@@ -1,0 +1,7 @@
+# Used by `docker compose --profile caddy up -d`. DOMAIN comes from .env (e.g. quiz.example.com).
+# Caddy gets a Let's Encrypt cert automatically; DNS A record must point at the server and ports 80/443 must be free.
+{$DOMAIN} {
+	encode zstd gzip
+	# Caddy proxies WebSockets (/ws) transparently; no idle timeout on upgraded connections.
+	reverse_proxy app:3000
+}

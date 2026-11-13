@@ -1,0 +1,45 @@
+# Cloud 9 behind an existing host Nginx. Copy to /etc/nginx/sites-available/cloud9, adjust server_name,
+# symlink into sites-enabled, then: sudo nginx -t && sudo systemctl reload nginx
+# Get a cert with: sudo certbot --nginx -d quiz.example.com
+# The app container listens on 127.0.0.1:3000 (see docker-compose.yml).
+
+upstream cloud9 {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name quiz.example.com;
+
+    client_max_body_size 4m;        # CSV/JSON quiz imports
+
+    # WebSocket endpoint
+    location /ws {
+        proxy_pass http://cloud9;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location / {
+        proxy_pass http://cloud9;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 60s;
+    }
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml text/csv;
+}
