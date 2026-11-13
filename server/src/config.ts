@@ -1,6 +1,7 @@
 // Cloud 9 — configuration from environment. Owned by lead.
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
+import type { TelegramConfig } from './notify/contracts';
 
 export interface ModeratorConfig { id: string; username: string; password: string; displayName: string; isSuper: boolean }
 
@@ -14,6 +15,7 @@ export interface Config {
   maxPlayersPerRoom: number;
   webDist: string;            // built frontend directory
   secureCookies: boolean;     // true when publicUrl is https
+  telegram: TelegramConfig | null;   // null = Telegram integration off
 }
 
 /** MODERATORS="admin:pass:super,anu:pass,rahul:pass" — optional 3rd field "super". Display name = username. */
@@ -52,5 +54,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxPlayersPerRoom: Number(env.MAX_PLAYERS_PER_ROOM ?? 500),
     webDist: env.WEB_DIST ?? resolve('dist/web'),
     secureCookies: publicUrl.startsWith('https://'),
+    telegram: parseTelegram(env),
+  };
+}
+
+const list = (v: string | undefined) => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+export function parseTelegram(env: NodeJS.ProcessEnv): TelegramConfig | null {
+  const token = (env.TELEGRAM_BOT_TOKEN ?? '').trim();
+  if (!token) return null;
+  const topics: Record<string, number> = {};
+  for (const pair of list(env.TELEGRAM_TOPICS)) {
+    const [k, v] = pair.split('=');
+    const n = Number(v);
+    if (k && Number.isInteger(n) && n > 0) topics[k.trim().toLowerCase()] = n;
+  }
+  const flag = (v: string | undefined, d: boolean) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(v));
+  return {
+    token,
+    apiBase: (env.TELEGRAM_API_BASE ?? 'https://api.telegram.org').replace(/\/+$/, ''),
+    notifyChatIds: list(env.TELEGRAM_NOTIFY_CHAT_IDS),
+    adminIds: list(env.TELEGRAM_ADMIN_IDS),
+    topics,
+    notifyQuestions: flag(env.TELEGRAM_NOTIFY_QUESTIONS, false),
+    digestMinutes: Math.max(0, Number(env.TELEGRAM_DIGEST_MINUTES ?? 30) || 0),
+    sendCsv: flag(env.TELEGRAM_SEND_CSV, true),
   };
 }
