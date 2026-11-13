@@ -10,7 +10,7 @@
 // Clients render from the latest snapshot; deltas just patch counters. Every server message carries `v` (room version, increments on each state change);
 // clients ignore a `state` with v lower than the one they hold.
 
-import type { RoomState, LeaderEntry } from './model';
+import type { RoomState, LeaderEntry, BoardTop } from './model';
 
 // ───────────────────────────── client → server ─────────────────────────────
 
@@ -47,6 +47,7 @@ export interface QuestionPublic {
 export interface PlayerSnapshot {
   role: 'player';
   code: string;
+  eventName: string | null;
   title: string;
   label: string;
   state: RoomState;
@@ -57,7 +58,9 @@ export interface PlayerSnapshot {
   question: QuestionPublic | null;           // set in QUESTION, CLOSED, REVEAL, LEADERBOARD (current question)
   myAnswer: { choice: number } | null;       // my answer to the current question, if any
   reveal: { correctIndex: number; correct: boolean; points: number } | null;   // set in REVEAL and LEADERBOARD
-  leaderboard: LeaderEntry[] | null;         // top 10; set in LEADERBOARD and FINISHED
+  leaderboard: LeaderEntry[] | null;         // THIS QUIZ: TOP 3 ONLY for players; set in LEADERBOARD and FINISHED (me.rank/me.score give "You're #N")
+  /** EVENT standings; set in LEADERBOARD and FINISHED when the session belongs to an event, else null. */
+  eventBoard: { eventName: string; top: BoardTop[] /* top 3 */; me: { rank: number; score: number } | null; total: number } | null;
 }
 
 export interface HostSnapshot {
@@ -80,6 +83,9 @@ export interface HostSnapshot {
   answered: number;              // answers received for the current question
   distribution: number[] | null; // per-option counts; set in CLOSED, REVEAL, LEADERBOARD
   leaderboard: LeaderEntry[];    // top 10 (always present; empty in lobby)
+  eventName: string | null;
+  /** EVENT standings top 10; set in LEADERBOARD and FINISHED when the session belongs to an event, else null. */
+  eventBoard: { eventName: string; top: BoardTop[]; total: number } | null;
   nextQuestion: { text: string; options: string[]; correctIndex: number } | null;  // mod only: preview of the next question; null for present
 }
 

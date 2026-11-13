@@ -21,6 +21,7 @@ export interface QuestionDef {
 export interface QuizDef {
   id: string;
   moderatorId: string;
+  eventId: string | null;   // event this quiz belongs to (null = standalone)
   title: string;
   emailMode: EmailMode;
   scoring: ScoringMode;
@@ -32,6 +33,7 @@ export interface QuizDef {
 export interface QuizListItem {
   id: string;
   moderatorId: string;
+  eventId: string | null;
   title: string;
   questionCount: number;
   updatedAt: number;
@@ -43,6 +45,8 @@ export interface SessionSummary {
   code: string;             // 6 digits
   quizId: string;
   moderatorId: string;
+  eventId: string | null;
+  eventName: string | null;
   title: string;
   label: string;
   state: RoomState;
@@ -59,6 +63,7 @@ export interface SessionSummary {
 /** What the PUBLIC home page sees. No PII. */
 export interface PublicSession {
   code: string;
+  eventName: string | null;
   title: string;
   label: string;
   state: RoomState;
@@ -74,6 +79,41 @@ export interface LeaderEntry {
   score: number;
   rank: number;             // 1-based, ties share order by tie-break (no shared ranks)
 }
+
+// ───────────────────────────── events ─────────────────────────────
+// An EVENT groups quizzes (and their sessions) and has its own cumulative leaderboard.
+// Events are SHARED: every moderator can see them and add quizzes to them; only the creator or a super moderator can edit/delete.
+// Player identity across an event = lowercase email. When event.emailRequired is true (default), every session of a quiz
+// in that event requires email at join, regardless of the quiz's own emailMode. Players without email (only possible when
+// emailRequired=false) are ranked individually per session (key "p:<playerId>").
+
+export interface EventDef {
+  id: string;
+  moderatorId: string;      // creator
+  name: string;             // 1..80
+  emailRequired: boolean;   // default true
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface EventListItem extends EventDef {
+  quizCount: number;
+  sessionCount: number;
+  liveSessions: number;     // non-FINISHED sessions in memory
+}
+
+/** Cumulative event ranking. Scores = SUM of player.score over all non-kicked players with that key in sessions of the event. */
+export interface EventLeaderEntry {
+  key: string;              // lowercase email, or "p:<playerId>" when no email
+  name: string;             // display name from the player's most recent join
+  email: string | null;     // ONLY in moderator responses; null/omitted in public + player views
+  score: number;
+  quizzesPlayed: number;    // distinct sessions
+  rank: number;             // 1-based; tie-break: score desc, then first join asc
+}
+
+/** Compact leaderboard shown inside rooms. */
+export interface BoardTop { name: string; score: number; rank: number }
 
 export const DEFAULTS = {
   timeLimitSec: 20,

@@ -12,6 +12,15 @@ CREATE TABLE IF NOT EXISTS moderators (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  moderator_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  email_required INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS quizzes (
   id TEXT PRIMARY KEY,
   moderator_id TEXT NOT NULL,
@@ -79,3 +88,8 @@ CREATE TABLE IF NOT EXISTS answers (
   PRIMARY KEY (session_id, player_id, question_id)
 );
 CREATE INDEX IF NOT EXISTS idx_answers_session_q ON answers(session_id, question_id);
+
+-- v2 (events). Existing production DBs: repo.ts MUST migrate idempotently at boot, checking PRAGMA table_info first:
+--   ALTER TABLE quizzes  ADD COLUMN event_id TEXT;   CREATE INDEX IF NOT EXISTS idx_quizzes_event  ON quizzes(event_id);
+--   ALTER TABLE sessions ADD COLUMN event_id TEXT;   CREATE INDEX IF NOT EXISTS idx_sessions_event ON sessions(event_id);
+--   CREATE INDEX IF NOT EXISTS idx_players_email ON players(email);

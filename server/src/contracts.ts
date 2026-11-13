@@ -20,7 +20,7 @@
 
 import type { Server } from 'node:http';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type { QuizDef, QuizListItem, SessionSummary, PublicSession, RoomState } from '../../shared/model';
+import type { QuizDef, QuizListItem, SessionSummary, PublicSession, RoomState, EventDef, EventLeaderEntry } from '../../shared/model';
 import type { Me, PlayInfo, JoinReq, SessionPatch } from '../../shared/api';
 import type { Config } from './config';
 
@@ -31,6 +31,7 @@ export interface SessionRow {
   code: string;
   quizId: string;
   moderatorId: string;
+  eventId: string | null;  // copied from the quiz at session creation (column sessions.event_id)
   label: string;
   listed: boolean;
   joinOpen: boolean;
@@ -76,7 +77,17 @@ export interface ModeratorRow { id: string; username: string; displayName: strin
 export interface Repo {
   upsertModerator(m: ModeratorRow): void;
 
-  listQuizzes(moderatorId: string | null): QuizListItem[];   // null → all; newest updated first
+  listQuizzes(moderatorId: string | null, eventId?: string | 'none'): QuizListItem[];
+  //   moderatorId null → all moderators. eventId: string → only that event's quizzes (ignores moderatorId filter when caller passes null);
+  //   'none' → only quizzes without an event; undefined → no event filter. Newest updated first.
+
+  // ── events ──
+  saveEvent(e: EventDef): void;                              // insert or update
+  getEvent(id: string): EventDef | null;
+  listEvents(): (EventDef & { quizCount: number; sessionCount: number })[];   // newest first
+  deleteEvent(id: string): void;                             // sets quizzes.event_id = NULL for its quizzes, keeps sessions.event_id (history)
+  /** Cumulative ranking for an event (see shared/model.ts EventLeaderEntry). Includes emails. One SQL aggregate; must be fast (<5ms @ 5k players). */
+  eventLeaderboard(eventId: string): EventLeaderEntry[];
   getQuiz(id: string): QuizDef | null;
   saveQuiz(q: QuizDef): void;                                // insert or full replace (questions too) in one transaction
   deleteQuiz(id: string): void;
@@ -88,7 +99,7 @@ export interface Repo {
   getLatestSessionByCode(code: string): SessionRow | null;
 
   insertPlayer(p: PlayerRow): void;
-  updatePlayer(id: string, patch: Partial<Pick<PlayerRow, 'score' | 'kicked' | 'name'>>): void;
+  updatePlayer(id: string, patch: Partial<Pick<PlayerRow, 'score' | 'kicked' | 'name' | 'tokenHash'>>): void;
   listPlayers(sessionId: string): PlayerRow[];               // join order
   countPlayers(sessionId: string): number;                   // non-kicked
 
@@ -114,12 +125,14 @@ export interface AuthService {
 // ───────────────────────────── Game (Agent A) ─────────────────────────────
 
 export type JoinResult =
-  | { ok: true; playerId: string; token: string; name: string }
-  | { ok: false; error: 'not_found' | 'finished' | 'join_closed' | 'room_full' | 'email_required' | 'invalid_name' | 'invalid_email' };
+  | { ok: true; playerId: string; token: string; name: string; rejoined: boolean }
+  | { ok: false; error: 'not_found' | 'finished' | 'join_closed' | 'room_full' | 'email_required' | 'invalid_name' | 'invalid_email' | 'kicked' };
 
 export interface GameRegistry {
   /** Creates a room in LOBBY with a fresh unique 6-digit code; persists via repo.insertSession. */
-  createSession(input: { quiz: QuizDef; moderatorId: string; label: string; listed: boolean }): SessionSummary;
+  createSession(input: { quiz: QuizDef; event: EventDef | null; moderatorId: string; label: string; listed: boolean }): SessionSummary;
+  /** Live non-FINISHED room count per eventId (for /api/events liveSessions). */
+  liveCountByEvent(): Map<string, number>;
   /** Live summary from memory (includes FINISHED rooms still held in memory); null if not in memory. */
   summary(code: string): SessionSummary | null;
   /** All rooms in memory, optionally filtered by moderator. Newest first. */
