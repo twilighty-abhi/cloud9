@@ -14,7 +14,7 @@ import { FakeRepo } from './fakeRepo';
 
 const config: Config = {
   port: 0, host: '127.0.0.1', publicUrl: 'http://quiz.test', dbPath: ':memory:', sessionSecret: 'x'.repeat(32),
-  moderators: [], maxPlayersPerRoom: 500, webDist: '/nonexistent', secureCookies: false,
+  moderators: [], maxPlayersPerRoom: 500, webDist: '/nonexistent', secureCookies: false, telegram: null,
 };
 
 const fakeAuth: AuthService = {

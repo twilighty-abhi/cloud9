@@ -18,7 +18,7 @@ const config: Config = {
     { id: 'mod_bob', username: 'bob', password: 'pw-bob', displayName: 'bob', isSuper: false },
     { id: 'mod_root', username: 'root', password: 'pw:root', displayName: 'root', isSuper: true },
   ],
-  maxPlayersPerRoom: 500, webDist: '/nonexistent', secureCookies: false,
+  maxPlayersPerRoom: 500, webDist: '/nonexistent', secureCookies: false, telegram: null,
 };
 
 async function setup() {
