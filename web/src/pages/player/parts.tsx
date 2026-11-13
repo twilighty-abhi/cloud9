@@ -3,13 +3,14 @@ import type { ComponentChildren } from 'preact';
 import { linkClick } from '../../lib/router';
 import type { ConnStatus } from '../../lib/ws';
 import './player.css';
+import { Brand } from '../../lib/brand';
 
 export function Shell(props: { children: ComponentChildren }) {
   return (
     <div class="c9-page c9-p">
       <header class="c9-p-bar">
         <div class="c9-p-bar__inner">
-          <a href="/" class="c9-logo" onClick={linkClick}><span class="c9-logo__mark">9</span>Cloud 9</a>
+          <a href="/" class="c9-logo" onClick={linkClick}><Brand /></a>
         </div>
       </header>
       <main class="c9-p-main">{props.children}</main>

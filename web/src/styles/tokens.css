@@ -1,23 +1,23 @@
-/* Yuyu Design System tokens (from the "Yuyu Design System" artifact). Owned by lead. */
+/* Yuyu Design System structure, themed for CCD Kochi ’26 (Google palette, Google Sans Flex). Owned by lead. */
 :root {
-  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --font-body: Figtree, system-ui, sans-serif;
+  --font-display: "Google Sans Flex", "Google Sans", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-body: "Google Sans Flex", "Google Sans", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  --yy-bg-canvas: #FFFFFF; --yy-bg-subtle: #FAFAF9; --yy-bg-muted: #F4F4F2; --yy-bg-emphasis: #EFEEEA; --yy-bg-track: #F0EFEB;
-  --yy-border: #E7E6E2; --yy-border-strong: #D4D3CE;
-  --yy-text: #18181B; --yy-text-secondary: #3F3F46; --yy-text-muted: #5F5E5A; --yy-text-disabled: #A1A09A;
-  --yy-primary: #18181B; --yy-on-primary: #FFFFFF; --yy-inverse-surface: #18181B;
-  --yy-accent: #C2410C; --yy-accent-soft: #FAF0EC; --yy-on-accent: #FFFFFF; --yy-accent-text: #C2410C;
-  --yy-success-bg: #DCFCE7; --yy-success-fg: #166534; --yy-success-solid: #15803D;
-  --yy-warning-bg: #FEF3C7; --yy-warning-fg: #92400E; --yy-warning-solid: #F59E0B;
-  --yy-danger-bg: #FEE2E2; --yy-danger-fg: #B91C1C; --yy-danger-border: #FCA5A5; --yy-danger-solid: #B91C1C;
-  --yy-brand-mint: #7EE8C4; --yy-brand-lavender: #B9AEFF;
-  --yy-highlight-mint: #BDF3DF; --yy-highlight-lavender: #DCD6FF; --yy-highlight-peach: #FDE7C8;
-  --yy-tint-mint: #E9FBF3; --yy-tint-lavender: #F1EFFF; --yy-tint-peach: #FFF4E5;
+  --yy-bg-canvas: #FFFFFF; --yy-bg-subtle: #F8F9FA; --yy-bg-muted: #F1F3F4; --yy-bg-emphasis: #E8EAED; --yy-bg-track: #E8EAED;
+  --yy-border: #E8EAED; --yy-border-strong: #DADCE0;
+  --yy-text: #202124; --yy-text-secondary: #3C4043; --yy-text-muted: #5F6368; --yy-text-disabled: #9AA0A6;
+  --yy-primary: #202124; --yy-on-primary: #FFFFFF; --yy-inverse-surface: #202124;
+  --yy-accent: #1A73E8; --yy-accent-soft: #E8F0FE; --yy-on-accent: #FFFFFF; --yy-accent-text: #1A73E8;
+  --yy-success-bg: #E6F4EA; --yy-success-fg: #137333; --yy-success-solid: #188038;
+  --yy-warning-bg: #FEF7E0; --yy-warning-fg: #B06000; --yy-warning-solid: #F9AB00;
+  --yy-danger-bg: #FCE8E6; --yy-danger-fg: #C5221F; --yy-danger-border: #F6AEA9; --yy-danger-solid: #D93025;
+  --yy-brand-mint: #34A853; --yy-brand-lavender: #4285F4;
+  --yy-highlight-mint: #CEEAD6; --yy-highlight-lavender: #D2E3FC; --yy-highlight-peach: #FEEFC3;
+  --yy-tint-mint: #E6F4EA; --yy-tint-lavender: #E8F0FE; --yy-tint-peach: #FEF7E0;
 
-  /* Answer option colours (Cloud 9 addition, built from Yuyu presets): A ember, B iris, C teal, D ink */
-  --c9-opt-0: #C2410C; --c9-opt-1: #4B3FA8; --c9-opt-2: #0F766E; --c9-opt-3: #18181B;
+  /* Answer option colours = CCD symbols: A blue (think), B green (build), C yellow (ship, dark text), D red (scale) */
+  --c9-opt-0: #1A73E8; --c9-opt-1: #188038; --c9-opt-2: #F9AB00; --c9-opt-3: #D93025;
   --c9-on-opt: #FFFFFF;
 
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
@@ -30,33 +30,33 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --yy-bg-canvas: #111113; --yy-bg-subtle: #18181B; --yy-bg-muted: #232326; --yy-bg-emphasis: #2A2A2E; --yy-bg-track: #2A2A2E;
-    --yy-border: #2A2A2E; --yy-border-strong: #3F3F46;
-    --yy-text: #F4F4F5; --yy-text-secondary: #D4D4D8; --yy-text-muted: #A1A1AA; --yy-text-disabled: #71717A;
-    --yy-primary: #F4F4F5; --yy-on-primary: #18181B; --yy-inverse-surface: #1C1C1F;
-    --yy-accent-soft: #2A1812; --yy-accent-text: #FB8A5B;
-    --yy-success-bg: #13301F; --yy-success-fg: #86EFAC;
-    --yy-warning-bg: #33270B; --yy-warning-fg: #FCD34D;
-    --yy-danger-bg: #3A1414; --yy-danger-fg: #F87171; --yy-danger-border: #7F1D1D;
-    --yy-highlight-mint: #1F4D3D; --yy-highlight-lavender: #332E5C; --yy-highlight-peach: #4A3418;
-    --yy-tint-mint: #10261E; --yy-tint-lavender: #1C1A33; --yy-tint-peach: #2A1F10;
-    --c9-opt-3: #3F3F46;
+    --yy-bg-canvas: #131314; --yy-bg-subtle: #1B1B1D; --yy-bg-muted: #232326; --yy-bg-emphasis: #2D2E31; --yy-bg-track: #2D2E31;
+    --yy-border: #2D2E31; --yy-border-strong: #3C4043;
+    --yy-text: #E8EAED; --yy-text-secondary: #DADCE0; --yy-text-muted: #9AA0A6; --yy-text-disabled: #5F6368;
+    --yy-primary: #E8EAED; --yy-on-primary: #202124; --yy-inverse-surface: #1B1B1D;
+    --yy-accent-soft: #1C2B41; --yy-accent-text: #8AB4F8;
+    --yy-success-bg: #0F2E1A; --yy-success-fg: #81C995;
+    --yy-warning-bg: #33270B; --yy-warning-fg: #FDD663;
+    --yy-danger-bg: #3A1513; --yy-danger-fg: #F28B82; --yy-danger-border: #8C1D18;
+    --yy-highlight-mint: #1E4A2C; --yy-highlight-lavender: #1F3B66; --yy-highlight-peach: #4A3A12;
+    --yy-tint-mint: #10261A; --yy-tint-lavender: #16233A; --yy-tint-peach: #2A2210;
+    --c9-opt-3: #D93025;
     --shadow-raised: 0 12px 32px rgba(0,0,0,0.5); --shadow-float: 0 24px 48px rgba(0,0,0,0.5);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --yy-bg-canvas: #111113; --yy-bg-subtle: #18181B; --yy-bg-muted: #232326; --yy-bg-emphasis: #2A2A2E; --yy-bg-track: #2A2A2E;
-  --yy-border: #2A2A2E; --yy-border-strong: #3F3F46;
-  --yy-text: #F4F4F5; --yy-text-secondary: #D4D4D8; --yy-text-muted: #A1A1AA; --yy-text-disabled: #71717A;
-  --yy-primary: #F4F4F5; --yy-on-primary: #18181B; --yy-inverse-surface: #1C1C1F;
-  --yy-accent-soft: #2A1812; --yy-accent-text: #FB8A5B;
-  --yy-success-bg: #13301F; --yy-success-fg: #86EFAC;
-  --yy-warning-bg: #33270B; --yy-warning-fg: #FCD34D;
-  --yy-danger-bg: #3A1414; --yy-danger-fg: #F87171; --yy-danger-border: #7F1D1D;
-  --yy-highlight-mint: #1F4D3D; --yy-highlight-lavender: #332E5C; --yy-highlight-peach: #4A3418;
-  --yy-tint-mint: #10261E; --yy-tint-lavender: #1C1A33; --yy-tint-peach: #2A1F10;
-  --c9-opt-3: #3F3F46;
+  --yy-bg-canvas: #131314; --yy-bg-subtle: #1B1B1D; --yy-bg-muted: #232326; --yy-bg-emphasis: #2D2E31; --yy-bg-track: #2D2E31;
+  --yy-border: #2D2E31; --yy-border-strong: #3C4043;
+  --yy-text: #E8EAED; --yy-text-secondary: #DADCE0; --yy-text-muted: #9AA0A6; --yy-text-disabled: #5F6368;
+  --yy-primary: #E8EAED; --yy-on-primary: #202124; --yy-inverse-surface: #1B1B1D;
+  --yy-accent-soft: #1C2B41; --yy-accent-text: #8AB4F8;
+  --yy-success-bg: #0F2E1A; --yy-success-fg: #81C995;
+  --yy-warning-bg: #33270B; --yy-warning-fg: #FDD663;
+  --yy-danger-bg: #3A1513; --yy-danger-fg: #F28B82; --yy-danger-border: #8C1D18;
+  --yy-highlight-mint: #1E4A2C; --yy-highlight-lavender: #1F3B66; --yy-highlight-peach: #4A3A12;
+  --yy-tint-mint: #10261A; --yy-tint-lavender: #16233A; --yy-tint-peach: #2A2210;
+  --c9-opt-3: #D93025;
   --shadow-raised: 0 12px 32px rgba(0,0,0,0.5); --shadow-float: 0 24px 48px rgba(0,0,0,0.5);
   color-scheme: dark;
 }

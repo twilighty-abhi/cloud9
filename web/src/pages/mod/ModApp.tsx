@@ -26,7 +26,7 @@ export function ModApp(props: { path: string }) {
   };
   useEffect(check, []);
 
-  useEffect(() => { document.title = 'Cloud 9 · Moderator'; }, []);
+  useEffect(() => { document.title = 'CCD Kochi Live Quiz · Moderator'; }, []);
 
   if (auth.kind === 'loading') return <div class="c9-m-center c9-muted">Loading…</div>;
   if (auth.kind === 'error') {

@@ -25,3 +25,26 @@ a { color: inherit; }
 .c9-conn--off { color: var(--yy-warning-fg); background: var(--yy-warning-bg); padding: 2px 10px; border-radius: var(--radius-full); }
 .c9-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+/* ── CCD Kochi ’26 theme additions ── */
+h1, h2, h3, h4 { font-weight: 700; letter-spacing: -0.025em; }
+.c9-logo { gap: 0; }
+.c9-brand { display: inline-flex; align-items: center; gap: 12px; color: var(--yy-text); text-decoration: none; font-family: var(--font-display); }
+.c9-brand__word { display: inline-flex; flex-direction: column; font-weight: 600; font-size: 12.5px; line-height: 0.92; letter-spacing: -0.03em; }
+.c9-brand__word b { font-weight: 600; margin-left: 4px; }
+.c9-brand__word svg { display: inline-block; margin-left: 2px; vertical-align: 0; }
+.c9-brand__div { width: 1px; align-self: stretch; background: var(--yy-border-strong); }
+.c9-brand__app { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--yy-text-secondary); white-space: nowrap; }
+.c9-brand--lg { gap: 22px; }
+.c9-brand--lg .c9-brand__word { font-size: 26px; }
+.c9-brand--lg .c9-brand__app { font-size: 28px; }
+.c9-symbols { display: inline-flex; align-items: center; }
+/* Remaining small marks: 4-colour Google dot */
+.c9-logo__mark { background: conic-gradient(#4285F4 0 25%, #34A853 0 50%, #FAAB00 0 75%, #EA4335 0) !important; color: #FFFFFF !important; border-radius: 50% !important; }
+/* Yellow answer option needs dark text for contrast */
+.c9-p-opt--2, .c9-pr-tile--2, .c9-m-letter--2 { color: #202124 !important; }
+.c9-p-opt--2 *, .c9-pr-tile--2 * { color: #202124; }
+.c9-ccd-hero { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 8px; }
+.c9-ccd-hero__line { font-family: var(--font-display); font-weight: 600; font-size: 28px; line-height: 1.05; letter-spacing: -0.035em; margin-top: 6px; }
+.c9-ccd-hero__line span { color: #4285F4; }
+.c9-ccd-hero__meta { font-size: 13px; color: var(--yy-text-muted); }

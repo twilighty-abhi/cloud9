@@ -7,6 +7,7 @@ import { getPlayer } from '../../lib/storage';
 import { fixtureName, homeFixture } from '../../dev/playerFixtures';
 import { IconArrowRight, IconUsers } from '../player/icons';
 import './home.css';
+import { Brand, CcdSymbols } from '../../lib/brand';
 
 const POLL_MS = 5000;
 
@@ -45,10 +46,15 @@ export function Home() {
     <div class="c9-page c9-h">
       <header class="c9-h-header">
         <div class="c9-h-inner">
-          <a href="/" class="c9-logo" onClick={linkClick}><span class="c9-logo__mark">9</span>Cloud 9</a>
+          <a href="/" class="c9-logo" onClick={linkClick}><Brand /></a>
         </div>
       </header>
       <main class="c9-h-inner c9-h-main">
+        <div class="c9-ccd-hero">
+          <CcdSymbols size={18} />
+          <p class="c9-ccd-hero__line">At the speed of <span>thought.</span></p>
+          <p class="c9-ccd-hero__meta">Google Cloud Community Day Kochi · 14 Nov 2026 · Holiday Inn, Kochi</p>
+        </div>
         <CodeBox />
         <section class="c9-h-live" aria-labelledby="c9-h-live-title">
           <div class="c9-h-live__head">

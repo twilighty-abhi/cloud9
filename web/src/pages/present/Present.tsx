@@ -7,6 +7,7 @@ import { query } from '../../lib/router';
 import { hostFixture } from '../../dev/modFixtures';
 import { LETTERS, qrSrc, fmtNum } from '../mod/common';
 import './present.css';
+import { Brand } from '../../lib/brand';
 
 type Conn = RoomConn<HostSnapshot>;
 
@@ -24,13 +25,13 @@ export function Present(props: { code: string }) {
     if (t === 'dark' || t === 'light') root.setAttribute('data-theme', t);
     return () => { if (prev === null) root.removeAttribute('data-theme'); else root.setAttribute('data-theme', prev); };
   }, []);
-  useEffect(() => { document.title = snap ? `${snap.title} · Cloud 9` : 'Cloud 9 · Present'; }, [snap?.title]);
+  useEffect(() => { document.title = snap ? `${snap.title} · CCD Kochi Live Quiz` : 'CCD Kochi Live Quiz · Present'; }, [snap?.title]);
 
   if (conn.fatal === 'not_found') {
     return (
       <div class="c9-pr c9-pr--msg">
         <div class="c9-pr-msg">
-          <span class="c9-pr-logo"><span class="c9-logo__mark">9</span>Cloud 9</span>
+          <span class="c9-pr-logo"><Brand size="lg" /></span>
           <h1>No room with code <span class="c9-mono">{props.code}</span></h1>
           <p>Check the code with your moderator. The quiz may have ended.</p>
         </div>
@@ -41,7 +42,7 @@ export function Present(props: { code: string }) {
     return (
       <div class="c9-pr c9-pr--msg">
         <div class="c9-pr-msg">
-          <span class="c9-pr-logo"><span class="c9-logo__mark">9</span>Cloud 9</span>
+          <span class="c9-pr-logo"><Brand size="lg" /></span>
           <p>{conn.status === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</p>
         </div>
       </div>
@@ -54,7 +55,7 @@ export function Present(props: { code: string }) {
   return (
     <div class={`c9-pr c9-pr--${snap.state.toLowerCase()}`}>
       <header class="c9-pr-top">
-        <span class="c9-pr-logo"><span class="c9-logo__mark">9</span>Cloud 9</span>
+        <span class="c9-pr-logo"><Brand size="lg" /></span>
         <span class="c9-pr-top__title">{snap.title}{snap.label && <span> · {snap.label}</span>}</span>
         <span class="c9-spacer" />
         {snap.state !== 'LOBBY' && snap.joinOpen && (

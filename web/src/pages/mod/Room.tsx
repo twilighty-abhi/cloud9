@@ -21,7 +21,7 @@ export function Room(props: { code: string; me: Me }) {
   const conn = fx ?? live;
   const snap = conn.snap;
 
-  useEffect(() => { document.title = `Cloud 9 · Room ${props.code}`; }, [props.code]);
+  useEffect(() => { document.title = `Room ${props.code} · CCD Kochi Live Quiz`; }, [props.code]);
 
   if (conn.fatal === 'unauthorized') {
     return <Notice title="You don't have access to this room" body="It belongs to another moderator, or your sign-in expired. Sign in again from the dashboard." />;

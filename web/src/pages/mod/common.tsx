@@ -4,6 +4,7 @@ import type { RoomState } from '../../../../shared/model';
 import { get, api, HttpError } from '../../lib/api';
 import { query, linkClick } from '../../lib/router';
 import { fixtureGet, fakeQr, fxMe } from '../../dev/modFixtures';
+import { Brand } from '../../lib/brand';
 
 export const fxMeOr = () => fxMe;
 
@@ -49,7 +50,7 @@ export function Link(props: { href: string; class?: string; children: ComponentC
 }
 
 export function Logo() {
-  return <a href="/mod" class="c9-logo" onClick={linkClick as any}><span class="c9-logo__mark" aria-hidden="true">9</span>Cloud 9</a>;
+  return <a href="/mod" class="c9-logo" onClick={linkClick as any}><Brand app="Quiz · Moderator" /></a>;
 }
 
 /** Instant-setting switch: whole row clickable, label left, switch right. */
