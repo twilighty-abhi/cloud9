@@ -1,6 +1,6 @@
 Deploy "Cloud 9" (a live quiz web app) to my server over SSH and get it production-ready for an event TOMORROW (~200 concurrent players). Work carefully: this server already runs other workloads that must NOT be disturbed.
 
-Server: <SSH_TARGET e.g. root@1.2.3.4>  (Hetzner, 4 GB RAM, 2 vCPU, ~1 GB already used)
+Server: ssh root@65.21.181.247  (Hetzner, 4 GB RAM, 2 vCPU, ~1 GB already used)
 Repo: git@github.com:twilighty-abhi/cloud9.git (PRIVATE)
 Domain: cloud9.abiramnj.com — DNS is NOT pointed at the server yet; I will add an A record soon (see step 6).
 Moderator accounts I want: <e.g. admin (super), mod1, mod2, mod3>
@@ -12,15 +12,15 @@ Steps:
 2. Install Docker + compose plugin only if missing.
 3. Clone to /opt/cloud9. The repo is private: create a read-only deploy key on the server (`ssh-keygen -t ed25519 -f ~/.ssh/cloud9_deploy -N ""`), show me the public key and wait for me to add it at GitHub → repo → Settings → Deploy keys, then clone using that key (GIT_SSH_COMMAND or ~/.ssh/config Host alias).
 4. Create /opt/cloud9/.env from .env.example:
-   - PUBLIC_URL = http://<server-ip>:3000 for now (QR codes and join links use it). Switch to https://cloud9.abiramnj.com in step 6b once DNS works.
+   - PUBLIC_URL = http://65.21.181.247:3000 for now (QR codes and join links use it). Switch to https://cloud9.abiramnj.com in step 6b once DNS works.
    - SESSION_SECRET = `openssl rand -hex 32`
    - MODERATORS = the accounts above with strong random passwords (format admin:PASS:super,mod1:PASS,...)
    - JOIN_RATE_PER_MIN=1000, LOGIN_RATE_PER_MIN=20 (venue Wi-Fi shares one IP)
    - chmod 600 .env. Print the moderator usernames + passwords to me ONCE at the end.
 5. `mkdir -p data && chown 1000:1000 data` (container runs as uid 1000), then `docker compose up -d --build`. Check `docker compose ps` is healthy and `curl -s localhost:3000/healthz` returns ok.
 6. Expose it in two phases.
-   6a. NOW (no DNS yet): change the app port mapping to "3000:3000" and open TCP 3000 in the firewall (ufw if active; tell me if the Hetzner Cloud firewall needs a manual rule). Confirm http://<server-ip>:3000 works from outside.
-   6b. DOMAIN: tell me the exact DNS record to add (A record: cloud9 → <server-ip> on abiramnj.com, proxy OFF if it's on Cloudflare so WebSockets/TLS issuance work simply). Poll `dig +short cloud9.abiramnj.com` (every 30 s, up to 15 min) until it returns the server IP. Then, based on step 1:
+   6a. NOW (no DNS yet): change the app port mapping to "3000:3000" and open TCP 3000 in the firewall (ufw if active; tell me if the Hetzner Cloud firewall needs a manual rule). Confirm http://65.21.181.247:3000 works from outside.
+   6b. DOMAIN: tell me the exact DNS record to add (A record: cloud9 → 65.21.181.247 on abiramnj.com, proxy OFF if it's on Cloudflare so WebSockets/TLS issuance work simply). Poll `dig +short cloud9.abiramnj.com` (every 30 s, up to 15 min) until it returns the server IP. Then, based on step 1:
      - If Nginx/Caddy/Traefik already owns 80/443: add a site for cloud9.abiramnj.com proxying to 127.0.0.1:3000 with WebSocket upgrade headers on /ws and a long read timeout (see docker/nginx.conf.example), get TLS the way that proxy already does it (e.g. certbot --nginx), validate (`nginx -t`) BEFORE reloading, and show me the diff first.
      - If 80/443 are free: `DOMAIN=cloud9.abiramnj.com docker compose --profile caddy up -d` (Caddy gets the certificate automatically).
      Then set PUBLIC_URL=https://cloud9.abiramnj.com in .env, set the app port mapping back to "127.0.0.1:3000:3000", close port 3000 in the firewall, and `docker compose up -d` to apply. Confirm https://cloud9.abiramnj.com/healthz works and that a newly created session's QR/join link uses the domain.
