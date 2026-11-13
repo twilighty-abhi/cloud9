@@ -8,6 +8,7 @@ import type { PlayerSnapshot, HostSnapshot, QuestionPublic, ModAction, ErrorCode
 import { WS_CLOSE } from '../../../shared/protocol';
 import type { Repo, SessionRow, PlayerRow, AnswerRow } from '../contracts';
 import { sendRaw, sendMsg, safeClose } from '../realtime/send';
+import { bus } from '../notify/bus';
 
 const DELTA_INTERVAL_MS = 250; // max 4 deltas / s / room
 const PLAYER_TOP = 3;           // players see only the top 3 of the quiz / event boards
@@ -418,9 +419,15 @@ export class Room {
     this.broadcastState();
   }
 
-  private openQuestion(i: number): void {
+  /** Notify-bus emit: payload built lazily, failures logged and swallowed (never affects the game). */
+  private notify(build: () => Parameters<typeof bus.emit>[0]): void {
+    try { bus.emit(build()); } catch (e) { console.error(`[game] notify emit failed (room ${this.code})`, (e as Error)?.message); }
+  }
+
+  private openQuestion(i: number, actor: string | null = null): void {
     const q = this.quiz.questions[i];
-    if (!q) { this.finish(); return; }
+    if (!q) { this.finish(actor, false); return; }
+    const starting = this.state === 'LOBBY';
     const now = Date.now();
     this.clearCloseTimer();
     this.state = 'QUESTION';
@@ -434,34 +441,54 @@ export class Room {
     }, this.qEndsAt + this.graceMs - now);
     this.closeTimer.unref();
     this.commit();
+    if (starting && i === 0) this.notify(() => ({ type: 'session.started', at: Date.now(), actor, session: this.summary() }));
     this.checkAllAnswered();
   }
 
-  private closeQuestion(): void {
+  private closeQuestion(actor: string | null = null): void {
     this.clearCloseTimer();
     this.state = 'CLOSED';
     this.recomputeCounts();
     this.commit();
+    this.notify(() => {
+      let correct = 0;
+      for (const p of this.players.values()) if (p.answers.get(this.qIndex)?.correct) correct++;
+      return {
+        type: 'question.closed', at: Date.now(), actor, session: this.summary(), qIndex: this.qIndex,
+        answered: this.answered, playerCount: this.activeCount(), correct,
+      };
+    });
   }
 
-  private finish(): void {
+  private finish(actor: string | null = null, endedEarly = false): void {
     this.clearCloseTimer();
     this.state = 'FINISHED';
     this.endedAt = Date.now();
     this.commit();
+    this.notify(() => {
+      // FINISHED: nothing is hidden, so leaderboard() carries all points. commit() → broadcastState() just computed
+      // the event standings for this v; eventStandings(false) reuses that result (no extra query).
+      const leaderboard: BoardTop[] = this.leaderboard().map((e) => ({ name: e.name, score: e.score, rank: e.rank }));
+      const ev = this.eventStandings(false);
+      const eventBoard = ev && this.eventName !== null
+        ? { eventName: this.eventName, top: Room.boardTop(ev.list, DEFAULTS.leaderboardSize), total: ev.list.length }
+        : null;
+      return { type: 'session.finished', at: Date.now(), actor, session: this.summary(), endedEarly, leaderboard, eventBoard };
+    });
   }
 
-  modAction(action: ModAction, expectQ: number): Result {
+  /** actor = username of the moderator who sent the action (for notifications); optional for compatibility. */
+  modAction(action: ModAction, expectQ: number, actor: string | null = null): Result {
     if (expectQ !== this.qIndex) return fail('stale', `Room is at question ${this.qIndex}, not ${expectQ}`);
     const s = this.state;
     switch (action) {
       case 'start':
         if (s !== 'LOBBY') return fail('bad_transition', `Cannot start from ${s}`);
-        if (this.total === 0) this.finish(); else this.openQuestion(0);
+        if (this.total === 0) this.finish(actor, false); else this.openQuestion(0, actor);
         return { ok: true };
       case 'close':
         if (s !== 'QUESTION') return fail('bad_transition', `Cannot close from ${s}`);
-        this.closeQuestion();
+        this.closeQuestion(actor);
         return { ok: true };
       case 'reveal':
         if (s !== 'CLOSED') return fail('bad_transition', `Cannot reveal from ${s}`);
@@ -475,11 +502,11 @@ export class Room {
         return { ok: true };
       case 'next':
         if (s !== 'REVEAL' && s !== 'LEADERBOARD') return fail('bad_transition', `Cannot go next from ${s}`);
-        if (this.qIndex + 1 >= this.total) this.finish(); else this.openQuestion(this.qIndex + 1);
+        if (this.qIndex + 1 >= this.total) this.finish(actor, false); else this.openQuestion(this.qIndex + 1, actor);
         return { ok: true };
       case 'end':
         if (s === 'FINISHED') return fail('bad_transition', 'Already finished');
-        this.finish();
+        this.finish(actor, this.qIndex < this.total - 1);
         return { ok: true };
       default:
         return fail('bad_message', 'Unknown action');
@@ -543,7 +570,7 @@ export class Room {
 
   onJoined(): void { this.markDelta('lobby'); }
 
-  kick(playerId: string): Result {
+  kick(playerId: string, actor: string | null = null): Result {
     const p = this.players.get(playerId);
     if (!p) return fail('not_found', 'Player not found');
     if (p.kicked) return { ok: true };
@@ -563,6 +590,7 @@ export class Room {
     } else {
       this.markDelta('lobby');
     }
+    if (actor !== null) this.notify(() => ({ type: 'player.kicked', at: Date.now(), actor, session: this.summary(), playerName: p.name }));
     return { ok: true };
   }
 

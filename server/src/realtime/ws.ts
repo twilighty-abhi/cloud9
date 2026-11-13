@@ -20,6 +20,7 @@ interface Ctx {
   room: Room;
   role: 'player' | 'mod' | 'present';
   player: PlayerMem | null;
+  modName: string | null;   // moderator username (role=mod), for notifications
   tokens: number;
   lastRefill: number;
   missed: number;
@@ -77,6 +78,7 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
       return;
     }
     let player: PlayerMem | null = null;
+    let modName: string | null = null;
     if (role === 'player') {
       const token = url.searchParams.get('token') ?? '';
       player = token && token.length <= 200 ? room.findByTokenHash(sha256Hex(token)) : null;
@@ -97,13 +99,14 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
         safeClose(ws, WS_CLOSE.UNAUTHORIZED, 'unauthorized');
         return;
       }
+      modName = me.username;
     } else if (role !== 'present') {
       sendError(ws, 'bad_message', 'Unknown role');
       safeClose(ws, WS_CLOSE.UNAUTHORIZED, 'bad_role');
       return;
     }
 
-    const ctx: Ctx = { ws, room, role, player, tokens: RATE_PER_SEC, lastRefill: Date.now(), missed: 0, closed: false };
+    const ctx: Ctx = { ws, room, role, player, modName, tokens: RATE_PER_SEC, lastRefill: Date.now(), missed: 0, closed: false };
     live.add(ctx);
 
     ws.on('pong', () => { ctx.missed = 0; });
@@ -164,13 +167,13 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
       }
       case 'mod': {
         if (ctx.role !== 'mod') { sendError(ws, 'unauthorized', 'Moderator only'); return; }
-        const r = room.modAction(msg.action, msg.expectQ);
+        const r = room.modAction(msg.action, msg.expectQ, ctx.modName);
         if (!r.ok) sendError(ws, r.code, r.message);
         return;
       }
       case 'kick': {
         if (ctx.role !== 'mod') { sendError(ws, 'unauthorized', 'Moderator only'); return; }
-        const r = room.kick(msg.playerId);
+        const r = room.kick(msg.playerId, ctx.modName);
         if (!r.ok) sendError(ws, r.code, r.message);
         return;
       }

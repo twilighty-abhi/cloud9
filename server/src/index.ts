@@ -8,6 +8,7 @@ import { openRepo } from './db/repo';
 import { createAuth } from './auth/index';
 import { createGame } from './game/index';
 import { registerRoutes } from './http/index';
+import { startTelegram } from './notify/index';
 
 async function main() {
   const config = loadConfig();
@@ -50,12 +51,14 @@ async function main() {
 
   await app.listen({ port: config.port, host: config.host });
   game.attach(app.server, auth);
+  const telegram = startTelegram({ config, repo, registry: game.registry, restoredRooms: restored });
   console.log(`[cloud9] listening on ${config.host}:${config.port} · public ${config.publicUrl} · restored ${restored} room(s) · ${config.moderators.length} moderator(s)`);
 
   let closing = false;
   const shutdown = async (sig: string) => {
     if (closing) return; closing = true;
     console.log(`[cloud9] ${sig} — shutting down`);
+    try { await telegram?.stop(); } catch (e) { console.error(e); }
     try { game.shutdown(); } catch (e) { console.error(e); }
     try { await app.close(); } catch (e) { console.error(e); }
     try { repo.close(); } catch (e) { console.error(e); }

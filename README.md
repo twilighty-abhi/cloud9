@@ -127,8 +127,17 @@ curl -s localhost:3000/healthz          # rooms / sockets / rssMb
   ```
   (`.backup()` is safe while the app is running; copying `cloud9.db` directly is only safe after `docker compose stop app`.)
 
+## Telegram bot (optional)
+
+Cloud 9 can post session activity (created / started / finished with leaderboards, results CSV to admins) to a Telegram
+group and private chats, with per-hall forum topics, and answer admin commands like `/live`, `/leaderboard`, `/winner`
+and `/export <code>`. It is **off unless `TELEGRAM_BOT_TOKEN` is set**, and Telegram outages never affect the quiz
+(messages wait in an outbox and are sent later). Groups never see player emails.
+
+Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, troubleshooting): **[docs/TELEGRAM.md](docs/TELEGRAM.md)**.
+
 ## Configuration
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
-`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container.
+`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).

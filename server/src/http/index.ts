@@ -3,13 +3,15 @@ import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import QRCode from 'qrcode';
 import { z } from 'zod';
-import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard } from '../../../shared/api';
+import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard, SessionPatch } from '../../../shared/api';
 import type { RegisterRoutes, RouteDeps, SessionRow } from '../contracts';
 import { COOKIE_NAME, SESSION_TTL_MS } from '../auth/index';
 import { createRateLimiter } from '../util/rateLimit';
 import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
 import { buildExportCsv } from './exportCsv';
+import { bus } from '../notify/bus';
+import type { NotifyEvent } from '../notify/contracts';
 import {
   ImportError,
   TEMPLATE_CSV,
@@ -131,6 +133,13 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     if (!repo.getEvent(v)) fail(400, 'invalid_event', 'Event not found');
     return v;
   };
+  /** Notify-bus emit: payload built lazily; any failure is logged and swallowed (never affects the response). */
+  const notify = (build: () => NotifyEvent | null): void => {
+    try { const e = build(); if (e) bus.emit(e); } catch (err) { console.error('[http] notify emit failed', (err as Error)?.message); }
+  };
+  const modName = (id: string): string => auth.getModerator(id)?.username ?? id;
+  const evPayload = (e: EventDef) => ({ id: e.id, name: e.name, emailRequired: e.emailRequired });
+  const quizPayload = (q: QuizDef) => ({ id: q.id, title: q.title, eventId: q.eventId ?? null, questionCount: q.questions.length, owner: modName(q.moderatorId) });
   const loadEvent = (id: string): EventDef => repo.getEvent(id) ?? fail(404, 'not_found', 'Event not found');
   const summaryFromRow = (row: SessionRow, nameOf: (id: string | null) => string | null): SessionSummary => ({
     id: row.id,
@@ -211,6 +220,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       updatedAt: now,
     };
     repo.saveQuiz(quiz);
+    notify(() => ({ type: 'quiz.created', at: Date.now(), actor: me.username, quiz: quizPayload(quiz) }));
     return reply.code(201).send(quiz);
   });
 
@@ -240,6 +250,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       updatedAt: now,
     };
     repo.saveQuiz(quiz);
+    notify(() => ({ type: 'quiz.created', at: Date.now(), actor: me.username, quiz: quizPayload(quiz) }));
     return reply.code(201).send(quiz);
   });
 
@@ -263,13 +274,15 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       updatedAt: Math.max(Date.now(), existing.updatedAt + 1),
     };
     repo.saveQuiz(quiz);
+    notify(() => ({ type: 'quiz.updated', at: Date.now(), actor: me.username, quiz: quizPayload(quiz) }));
     return quiz;
   });
 
   api.delete<{ Params: { id: string } }>('/api/quizzes/:id', async (req) => {
     const me = requireMe(req);
-    loadOwnedQuiz(me, req.params.id);
+    const quiz = loadOwnedQuiz(me, req.params.id);
     repo.deleteQuiz(req.params.id);
+    notify(() => ({ type: 'quiz.deleted', at: Date.now(), actor: me.username, quiz: quizPayload(quiz) }));
     return { ok: true };
   });
 
@@ -288,6 +301,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       listed: body.listed ?? true,
     });
     publicCache = null;
+    notify(() => ({ type: 'session.created', at: Date.now(), actor: me.username, session: summary }));
     return reply.code(201).send(summary);
   });
 
@@ -314,6 +328,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     const now = Date.now();
     const event: EventDef = { id: newId('ev'), moderatorId: me.id, name: input.name, emailRequired: input.emailRequired ?? true, createdAt: now, updatedAt: now };
     repo.saveEvent(event);
+    notify(() => ({ type: 'event.created', at: Date.now(), actor: me.username, event: evPayload(event) }));
     return reply.code(201).send(event);
   });
 
@@ -348,6 +363,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     };
     repo.saveEvent(event);
     eventBoardCache.delete(event.id);
+    notify(() => ({ type: 'event.updated', at: Date.now(), actor: me.username, event: evPayload(event) }));
     return event;
   });
 
@@ -357,6 +373,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     if (!canAccess(me, existing.moderatorId)) fail(403, 'forbidden', 'Only the event creator can delete this event');
     repo.deleteEvent(existing.id);
     eventBoardCache.delete(existing.id);
+    notify(() => ({ type: 'event.deleted', at: Date.now(), actor: me.username, event: evPayload(existing) }));
     return { ok: true };
   });
 
@@ -388,8 +405,18 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     const owner = registry.ownerOf(code) ?? fail(404, 'not_found', 'Room not found (or no longer live)');
     if (!canAccess(me, owner)) fail(403, 'forbidden', 'You do not own this room');
     const patch = { ...body, ...(body.label !== undefined ? { label: body.label.trim().slice(0, 60) } : {}) };
+    const before = registry.summary(code);
     const s = registry.patch(code, patch) ?? fail(404, 'not_found', 'Room not found');
     publicCache = null;
+    notify(() => {
+      if (!before) return null;
+      const changes: SessionPatch = {};
+      if (s.label !== before.label) changes.label = s.label;
+      if (s.listed !== before.listed) changes.listed = s.listed;
+      if (s.joinOpen !== before.joinOpen) changes.joinOpen = s.joinOpen;
+      if (Object.keys(changes).length === 0) return null;
+      return { type: 'session.updated', at: Date.now(), actor: me.username, session: s, changes };
+    });
     return s;
   });
 
