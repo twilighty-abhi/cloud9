@@ -44,6 +44,9 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let pingTimer: ReturnType<typeof setInterval> | undefined;
+    // Half-open sockets (phone slept / switched network) can look OPEN for a long time; track liveness ourselves.
+    let lastMsgAt = Date.now();
+    const STALE_MS = 50_000;
     snapRef.current = null;
     setSnap(null); setFatal(null); setStatus('connecting');
 
@@ -52,21 +55,30 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
     const connect = () => {
       if (stopped) return;
       clearTimeout(timer);
+      const prev = wsRef.current;
+      if (prev) { prev.onclose = null; prev.onmessage = null; try { prev.close(); } catch { /* */ } }
       let ws: WebSocket;
       try { ws = new WebSocket(wsUrl(params)); } catch { schedule(); return; }
       wsRef.current = ws;
+      let firstState = true; // a new socket's first snapshot is authoritative even if its v is lower (server clock moved back across a restart)
       ws.onopen = () => {
-        attempt = 0; setStatus('open');
+        attempt = 0; lastMsgAt = Date.now(); setStatus('open');
         clearInterval(pingTimer);
-        pingTimer = setInterval(() => { if (ws.readyState === 1) ws.send('{"t":"ping"}'); }, 20000);
+        pingTimer = setInterval(() => {
+          if (wsRef.current !== ws || ws.readyState !== 1) return;
+          if (Date.now() - lastMsgAt > STALE_MS) { setStatus('reconnecting'); connect(); return; } // no pong for 2+ pings
+          ws.send('{"t":"ping"}');
+        }, 20000);
       };
       ws.onmessage = (ev) => {
+        lastMsgAt = Date.now();
         let m: ServerMsg;
         try { m = JSON.parse(ev.data as string) as ServerMsg; } catch { return; }
         const cur = snapRef.current as any;
         switch (m.t) {
           case 'state': {
-            if (cur && typeof (m as any).v === 'number' && (m as any).v < cur.v) return;
+            if (!firstState && cur && typeof (m as any).v === 'number' && (m as any).v < cur.v) return;
+            firstState = false;
             offsetRef.current = (m as any).serverNow - Date.now();
             const { t, ...rest } = m as any;
             apply(rest as S);
@@ -89,14 +101,18 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
             break;
           case 'error':
             setLastError({ code: m.code, message: m.message });
-            if (m.code === 'not_found') { setFatal('not_found'); stopped = true; }
-            if (m.code === 'unauthorized') { setFatal('unauthorized'); stopped = true; }
+            // Only connect-time errors (sent before the first snapshot, followed by a 44xx close) are fatal.
+            // In-session errors such as a mod's kick → 'not_found' must not kill a live screen.
+            if (!cur && m.code === 'not_found') { setFatal('not_found'); stopped = true; }
+            if (!cur && m.code === 'unauthorized') { setFatal('unauthorized'); stopped = true; }
             break;
         }
       };
       ws.onclose = (ev) => {
+        // A socket superseded by wake() must not clear state or schedule a second reconnect (duplicate sockets).
+        if (wsRef.current !== ws) return;
         clearInterval(pingTimer);
-        if (wsRef.current === ws) wsRef.current = null;
+        wsRef.current = null;
         if (ev.code === WS_CLOSE.NOT_FOUND) { setFatal('not_found'); stopped = true; }
         else if (ev.code === WS_CLOSE.UNAUTHORIZED) { setFatal('unauthorized'); stopped = true; }
         else if (ev.code === WS_CLOSE.KICKED) { setFatal('kicked'); stopped = true; }
@@ -115,18 +131,29 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
     };
 
     const wake = () => {
+      if (stopped || document.visibilityState !== 'visible') return;
+      const cur = wsRef.current;
+      const dead = !cur || cur.readyState > 1;
+      // OPEN but silent for a while after sleeping → probably half-open; replace it rather than wait for TCP to notice.
+      const silent = !!cur && cur.readyState === 1 && Date.now() - lastMsgAt > 25_000;
+      if (dead || silent) { attempt = 0; if (silent) setStatus('reconnecting'); connect(); }
+    };
+    const onOnline = () => {
+      // network changed: an OPEN socket from the old network is almost certainly dead
       if (stopped) return;
-      if (document.visibilityState === 'visible' && (!wsRef.current || wsRef.current.readyState > 1)) { attempt = 0; connect(); }
+      const cur = wsRef.current;
+      if (cur && cur.readyState === 0) return;
+      attempt = 0; setStatus('reconnecting'); connect();
     };
     document.addEventListener('visibilitychange', wake);
-    window.addEventListener('online', wake);
+    window.addEventListener('online', onOnline);
     connect();
 
     return () => {
       stopped = true;
       clearTimeout(timer); clearInterval(pingTimer);
       document.removeEventListener('visibilitychange', wake);
-      window.removeEventListener('online', wake);
+      window.removeEventListener('online', onOnline);
       const ws = wsRef.current; wsRef.current = null;
       if (ws) { ws.onclose = null; try { ws.close(1000); } catch { /* */ } }
     };

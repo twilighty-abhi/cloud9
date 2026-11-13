@@ -8,6 +8,9 @@ import { registerRoutes } from '../src/http/index';
 import type { Config } from '../src/config';
 import { FakeRegistry } from './fakeRegistry';
 
+// Production default is 1000/min (venue NAT); pin a small limit so the rate-limit assertions below stay meaningful.
+process.env.JOIN_RATE_PER_MIN = '10';
+
 const config: Config = {
   port: 0, host: '127.0.0.1', publicUrl: 'http://test.local', dbPath: ':memory:', sessionSecret: 'x'.repeat(32),
   moderators: [

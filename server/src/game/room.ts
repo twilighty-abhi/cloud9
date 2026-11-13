@@ -459,8 +459,13 @@ export class Room {
       sendMsg(ws, { t: 'kicked' });
       safeClose(ws, WS_CLOSE.KICKED, 'kicked');
     }
-    this.markDelta('lobby');
     this.checkAllAnswered();
+    if (this.state === 'REVEAL' || this.state === 'LEADERBOARD' || this.state === 'FINISHED') {
+      // Leaderboards are only rebuilt on full snapshots — push one so the kicked name disappears now.
+      this.broadcastState();
+    } else {
+      this.markDelta('lobby');
+    }
     return { ok: true };
   }
 

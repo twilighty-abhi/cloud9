@@ -40,9 +40,14 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
     try {
       url = new URL(req.url ?? '/', 'http://localhost');
     } catch {
+      if (server.listenerCount('upgrade') <= 1) socket.destroy();
       return;
     }
-    if (url.pathname !== '/ws') return; // not ours — leave it alone
+    if (url.pathname !== '/ws') {
+      // not ours — leave it to another upgrade listener if there is one, otherwise don't leak the socket
+      if (server.listenerCount('upgrade') <= 1) socket.destroy();
+      return;
+    }
     socket.on('error', () => { /* swallow; socket destroyed below or by ws */ });
     if (shuttingDown) { socket.destroy(); return; }
     try {

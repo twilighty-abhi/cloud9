@@ -21,7 +21,7 @@ git clone <repo-url> cloud9 && cd cloud9
 cp .env.example .env
 openssl rand -hex 32            # paste into SESSION_SECRET
 nano .env                       # PUBLIC_URL, MODERATORS (real passwords!), DOMAIN if using Caddy
-mkdir -p data
+mkdir -p data && sudo chown 1000:1000 data   # container runs as uid 1000 (node); root-owned ./data → SQLITE_CANTOPEN crash loop
 docker compose up -d --build    # app only, bound to 127.0.0.1:3000
 docker compose ps               # wait for "healthy"
 curl -s localhost:3000/healthz  # {"ok":true,"rooms":0,"sockets":0,...}
@@ -81,7 +81,7 @@ for CPU (target < 70 % of one core).
 
 Notes:
 - Target the app **directly** (`127.0.0.1:3000`), not through Caddy/Nginx: bots send a fake `X-Forwarded-For`
-  per player to get past the join rate limit (10/min/IP), and proxies replace that header.
+  per player to get past the join rate limit (`JOIN_RATE_PER_MIN`, default 1000/min/IP), and proxies replace that header.
 - Best run from your laptop through an SSH tunnel so the bots don't steal the server's CPU:
   `ssh -L 3000:127.0.0.1:3000 user@server`, then use `--url http://localhost:3000`.
 - Each run creates real quizzes/sessions named "Load test …" (unlisted). Run it before the event, then back up
@@ -105,7 +105,7 @@ docker compose logs -f --tail=100 app   # errors only at LOG_LEVEL=warn
 curl -s localhost:3000/healthz          # rooms / sockets / rssMb
 ```
 - **Phone stuck / blank**: refresh. The player token is kept in the browser, so they rejoin with the same score.
-- **Player can't join ("rate limited")**: wait a minute; 10 joins/min per IP. A whole venue behind one NAT is
+- **Player can't join ("rate limited")**: wait a minute; `JOIN_RATE_PER_MIN` joins/min per IP (default 1000). A whole venue behind one NAT is
   fine for normal arrival rates, but if a proxy is misconfigured every player shares the proxy's IP. Check that the
   Nginx config sets `X-Forwarded-For`.
 - **Moderator laptop dies**: log in on any device, open the same room from the dashboard, carry on.
