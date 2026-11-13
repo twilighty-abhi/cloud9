@@ -1,6 +1,7 @@
 // Cloud 9 — HTTP API routes (see shared/api.ts). Agent B.
 import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { createHash } from 'node:crypto';
 import QRCode from 'qrcode';
 import { z } from 'zod';
 import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard, SessionPatch } from '../../../shared/api';
@@ -24,6 +25,7 @@ import {
 } from './quizValidation';
 
 const CODE_RE = /^\d{6}$/;
+const opaqueKey = (key: string): string => 'k_' + createHash('sha256').update(key).digest('base64url').slice(0, 16);
 const PUBLIC_CACHE_MS = 2000;
 const QR_CACHE_MAX = 2000;
 
@@ -378,15 +380,19 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   });
 
   api.get<{ Params: { id: string } }>('/api/events/:id/leaderboard', async (req, reply) => {
-    requireMe(req);
+    const me = requireMe(req);
     const event = loadEvent(req.params.id);
     reply.header('cache-control', 'no-store');
-    return repo.eventLeaderboard(event.id);
+    const list = repo.eventLeaderboard(event.id);
+    if (me.isSuper) return list;
+    // Hall moderators get names + scores only: no email, and an opaque row key (the key can be the email).
+    return list.map((e) => ({ ...e, email: null, key: opaqueKey(e.key) }));
   });
 
   api.get<{ Params: { id: string } }>('/api/events/:id/export.csv', async (req, reply) => {
-    requireMe(req);
+    const me = requireMe(req);
     const event = loadEvent(req.params.id);
+    if (!me.isSuper) fail(403, 'forbidden', 'Only a super moderator can download the event CSV (it contains participant emails)');
     const lines = [csvRow(['rank', 'name', 'email', 'score', 'quizzes_played'])];
     for (const e of repo.eventLeaderboard(event.id)) lines.push(csvRow([e.rank, e.name, e.email ?? '', e.score, e.quizzesPlayed]));
     const filename = `cloud9-event-${slugify(event.name)}.csv`;

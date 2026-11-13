@@ -7,7 +7,7 @@ import type { HostSnapshot, QuestionPublic } from '../../../shared/protocol';
 export const FIXTURE_NAMES = [
   'login', 'dashboard', 'editor', 'import',
   'room-lobby', 'room-question', 'room-closed', 'room-reveal', 'room-leaderboard', 'room-finished',
-  'dashboard-events', 'event-mine', 'event-other', 'event-leaderboard', 'editor-event', 'import-event',
+  'dashboard-events', 'event-mine', 'event-other', 'event-leaderboard', 'event-leaderboard-super', 'editor-event', 'import-event',
   'room-leaderboard-event', 'room-finished-event',
   'present-lobby', 'present-question', 'present-closed', 'present-reveal', 'present-leaderboard', 'present-finished',
 ] as const;
@@ -150,7 +150,7 @@ export function hostFixture(name: string): HostSnapshot | null {
 export function fixtureGet(fixture: string, url: string): unknown {
   if (url === '/api/me') {
     if (fixture === 'login') throw Object.assign(new Error('Not signed in'), { status: 401, code: 'unauthorized' });
-    return fxMe;
+    return fixture === 'event-leaderboard-super' ? { ...fxMe, isSuper: true } : fxMe;
   }
   if (url === '/api/quizzes') return fxQuizzes;
   if (url === '/api/quizzes?eventId=none') return fxStandalone;
@@ -161,7 +161,11 @@ export function fixtureGet(fixture: string, url: string): unknown {
   }
   if (url === '/api/events') return fxEvents;
   let m: RegExpExecArray | null;
-  if ((m = /^\/api\/events\/([^/]+)\/leaderboard$/.exec(url))) return m[1] === 'ev3' ? [] : eventBoard();
+  if ((m = /^\/api\/events\/([^/]+)\/leaderboard$/.exec(url))) {
+    if (m[1] === 'ev3') return [];
+    // Like the server: emails only for super moderators.
+    return fixture === 'event-leaderboard-super' ? eventBoard() : eventBoard().map((e) => ({ ...e, email: null }));
+  }
   if ((m = /^\/api\/events\/([^/]+)$/.exec(url))) return eventDetail(m[1]);
   return null;
 }
@@ -172,7 +176,7 @@ export function fixturePath(fixture: string): string {
   if (fixture === 'dashboard-events') return '/mod';
   if (fixture === 'editor' || fixture === 'editor-event') return '/mod/quiz/q1';
   if (fixture === 'import' || fixture === 'import-event') return '/mod/import';
-  if (fixture === 'event-mine' || fixture === 'event-leaderboard') return '/mod/event/ev1';
+  if (fixture === 'event-mine' || fixture.startsWith('event-leaderboard')) return '/mod/event/ev1';
   if (fixture === 'event-other') return '/mod/event/ev2';
   if (fixture.startsWith('room-')) return `/mod/room/${CODE}`;
   return '/mod';
