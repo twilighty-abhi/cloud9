@@ -23,7 +23,7 @@ export function EventPage(props: { id: string; me: Me; onLogout: () => void }) {
   useEffect(() => { if (detail) document.title = `${detail.event.name} · CCD Kochi Live Quiz`; }, [detail?.event.name]);
 
   useEffect(() => {
-    if (detail && (fixture === 'event-leaderboard' || location.hash === '#lb')) requestAnimationFrame(() => document.getElementById('lb')?.scrollIntoView());
+    if (detail && (fixture?.startsWith('event-leaderboard') || location.hash === '#lb')) requestAnimationFrame(() => document.getElementById('lb')?.scrollIntoView());
   }, [!!detail]);
 
   if (err && !detail) {
@@ -110,7 +110,7 @@ export function EventPage(props: { id: string; me: Me; onLogout: () => void }) {
           )}
         </section>
 
-        <EventLeaderboard ev={ev} />
+        <EventLeaderboard ev={ev} me={props.me} />
       </main>
     </div>
   );
@@ -222,7 +222,9 @@ function QuizRow({ q, me }: { q: QuizListItem; me: Me }) {
 
 // ───────────────────────── leaderboard ─────────────────────────
 
-function EventLeaderboard({ ev }: { ev: EventDef }) {
+function EventLeaderboard({ ev, me }: { ev: EventDef; me: Me }) {
+  // Emails + the event CSV are super-moderator only (the server also enforces this).
+  const showEmail = me.isSuper;
   const [rows, setRows] = useState<EventLeaderEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [at, setAt] = useState<number | null>(null);
@@ -259,12 +261,12 @@ function EventLeaderboard({ ev }: { ev: EventDef }) {
           <a class="yy-btn yy-btn--secondary yy-btn--sm" href={`/present/event/${encodeURIComponent(ev.id)}`} target="_blank" rel="noopener">
             <span class="c9-m-hide-sm">Open on projector</span><span class="c9-m-show-sm">Projector</span> ↗
           </a>
-          <a class="yy-btn yy-btn--primary yy-btn--sm" href={`/api/events/${encodeURIComponent(ev.id)}/export.csv`} download>Download CSV</a>
+          {showEmail && <a class="yy-btn yy-btn--primary yy-btn--sm" href={`/api/events/${encodeURIComponent(ev.id)}/export.csv`} download>Download CSV</a>}
         </div>
       </div>
       <p class="c9-muted c9-m-small c9-m-lbnote">
         Scores add up across every quiz in this event{ev.emailRequired ? ', matched by email' : ' for players who gave the same email; others are ranked per session'}.
-        Click an email to copy it. {at && <>Refreshes every 5 s · updated {new Date(at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</>}
+        {' '}{showEmail ? 'Click an email to copy it. ' : 'Emails and the CSV download are only available to the super moderator. '}{at && <>Refreshes every 5 s · updated {new Date(at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</>}
       </p>
       {err && <div class="yy-callout" role="alert">Couldn't load the leaderboard: {err}{rows ? ' — showing the last copy.' : ''}</div>}
       {!rows && !err && <div class="c9-m-skel" />}
@@ -276,7 +278,7 @@ function EventLeaderboard({ ev }: { ev: EventDef }) {
           <div class="c9-m-winner__main">
             <div class="c9-overline">Current overall leader</div>
             <div class="c9-m-winner__name">{leader.name}</div>
-            {leader.email
+            {!showEmail ? null : leader.email
               ? <button class="c9-m-email c9-m-email--lg" onClick={() => copy(leader.email!)} title="Copy email"><EmailText email={leader.email} /><CopyTag on={copied === leader.email} /></button>
               : <span class="c9-muted">No email given</span>}
           </div>
@@ -287,7 +289,7 @@ function EventLeaderboard({ ev }: { ev: EventDef }) {
       {rows && rows.length > 0 && (
         <>
           {rows.length > 10 && (
-            <input class="yy-input c9-m-lbfilter" type="search" placeholder="Find by name or email…" aria-label="Find a player" value={filter}
+            <input class="yy-input c9-m-lbfilter" type="search" placeholder={showEmail ? 'Find by name or email…' : 'Find by name…'} aria-label="Find a player" value={filter}
               onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
           )}
           <div class="c9-m-evlb-wrap">
@@ -296,7 +298,7 @@ function EventLeaderboard({ ev }: { ev: EventDef }) {
                 <tr>
                   <th class="c9-m-evlb__rank" scope="col">#</th>
                   <th scope="col">Name</th>
-                  <th scope="col" class="c9-m-evlb__emailcol">Email</th>
+                  {showEmail && <th scope="col" class="c9-m-evlb__emailcol">Email</th>}
                   <th scope="col" class="c9-m-evlb__num c9-m-evlb__qcol"><span class="c9-m-hide-sm">Quizzes</span><span class="c9-m-show-sm" title="Quizzes played">Qz</span></th>
                   <th scope="col" class="c9-m-evlb__num">Score</th>
                 </tr>
@@ -307,18 +309,20 @@ function EventLeaderboard({ ev }: { ev: EventDef }) {
                     <td class="c9-m-evlb__rank"><span>{r.rank}</span></td>
                     <td class="c9-m-evlb__name">
                       <span class="c9-m-evlb__nm">{r.name}</span>
-                      {r.email && <button class="c9-m-email c9-m-evlb__emailsm" onClick={() => copy(r.email!)} title="Copy email"><EmailText email={r.email} /><CopyTag on={copied === r.email} /></button>}
+                      {showEmail && r.email && <button class="c9-m-email c9-m-evlb__emailsm" onClick={() => copy(r.email!)} title="Copy email"><EmailText email={r.email} /><CopyTag on={copied === r.email} /></button>}
                     </td>
-                    <td class="c9-m-evlb__emailcol">
-                      {r.email
-                        ? <button class="c9-m-email" onClick={() => copy(r.email!)} title="Copy email"><EmailText email={r.email} /><CopyTag on={copied === r.email} /></button>
-                        : <span class="c9-muted">—</span>}
-                    </td>
+                    {showEmail && (
+                      <td class="c9-m-evlb__emailcol">
+                        {r.email
+                          ? <button class="c9-m-email" onClick={() => copy(r.email!)} title="Copy email"><EmailText email={r.email} /><CopyTag on={copied === r.email} /></button>
+                          : <span class="c9-muted">—</span>}
+                      </td>
+                    )}
                     <td class="c9-m-evlb__num">{r.quizzesPlayed}</td>
                     <td class="c9-m-evlb__num c9-m-evlb__score">{fmtNum(r.score)}</td>
                   </tr>
                 ))}
-                {f && list.length === 0 && <tr><td colSpan={5} class="c9-muted">No player matches “{filter}”.</td></tr>}
+                {f && list.length === 0 && <tr><td colSpan={showEmail ? 5 : 4} class="c9-muted">No player matches “{filter}”.</td></tr>}
               </tbody>
             </table>
           </div>

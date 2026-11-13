@@ -53,8 +53,8 @@ export interface ImportReq {
 // GET    /api/events/:id              → 200 EventDetail
 // PUT    /api/events/:id              body EventInput → 200 EventDef     (creator or super, else 403)
 // DELETE /api/events/:id              → 200 {ok:true}  (creator or super; quizzes are DETACHED (eventId=null), not deleted; sessions keep history)
-// GET    /api/events/:id/leaderboard  → 200 EventLeaderEntry[] (FULL list incl. emails; any moderator)
-// GET    /api/events/:id/export.csv   → text/csv rank,name,email,score,quizzes_played (any moderator; formula-injection guarded)
+// GET    /api/events/:id/leaderboard  → 200 EventLeaderEntry[] (FULL list; emails only for super moderators — others get email=null and an opaque key)
+// GET    /api/events/:id/export.csv   → text/csv rank,name,email,score,quizzes_played (super moderators only, else 403; formula-injection guarded)
 export interface EventInput { name: string; emailRequired?: boolean }
 export interface EventDetail { event: EventDef; quizzes: QuizListItem[]; sessions: SessionSummary[] }
 // GET  /api/quizzes?eventId=<id>|none  → filter (optional). GET /api/quizzes (no param) still returns own (super: all).

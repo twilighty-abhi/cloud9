@@ -519,16 +519,32 @@ test('events: quizzes eventId filter + invalid_event, sessions carry event, lead
     for (let i = 0; i < 12; i++) P(`y${i}`, sid2, `Y${i}`, `y${i}@x.test`, 10 + i, 10 + i);
     t.repo.updatePlayer(j1.json().playerId, { score: 50 });
 
-    const lb = await t.req('GET', `/api/events/${ev.id}/leaderboard`, 'bob');
+    const lb = await t.req('GET', `/api/events/${ev.id}/leaderboard`, 'root');
     assert.equal(lb.statusCode, 200);
     const rows = lb.json();
     assert.equal(rows.length, 15); // bob, zed, anu, 12 y's
     assert.deepEqual(rows[0], { key: 'bob@x.test', name: 'Bobby', email: 'bob@x.test', score: 1500, quizzesPlayed: 2, rank: 1 });
     assert.equal(rows[1].key, 'zed@x.test');
+    // hall moderators: same ranking, names + scores, but no emails anywhere (key is opaque)
+    const lbHall = await t.req('GET', `/api/events/${ev.id}/leaderboard`, 'bob');
+    assert.equal(lbHall.statusCode, 200);
+    const hallRows = lbHall.json();
+    assert.equal(hallRows.length, 15);
+    assert.ok(!lbHall.body.includes('@'), 'no email in hall-moderator leaderboard');
+    assert.deepEqual({ ...hallRows[0], key: undefined }, { key: undefined, name: 'Bobby', email: null, score: 1500, quizzesPlayed: 2, rank: 1 });
+    assert.match(hallRows[0].key, /^k_[\w-]{16}$/);
+    assert.equal(new Set(hallRows.map((r: any) => r.key)).size, 15);
+    assert.deepEqual(hallRows.map((r: any) => r.key), (await t.req('GET', `/api/events/${ev.id}/leaderboard`, 'alice')).json().map((r: any) => r.key)); // stable
     assert.equal((await t.req('GET', `/api/events/${ev.id}/leaderboard`)).statusCode, 401);
     assert.equal((await t.req('GET', `/api/events/nope/leaderboard`, 'bob')).statusCode, 404);
 
-    const csv = await t.req('GET', `/api/events/${ev.id}/export.csv`, 'bob');
+    // event CSV (has emails) is super-only
+    const csvHall = await t.req('GET', `/api/events/${ev.id}/export.csv`, 'bob');
+    assert.equal(csvHall.statusCode, 403);
+    assert.equal(csvHall.json().error, 'forbidden');
+    assert.match(csvHall.json().message, /super moderator/);
+    assert.ok(!csvHall.body.includes('@x.test'));
+    const csv = await t.req('GET', `/api/events/${ev.id}/export.csv`, 'root');
     assert.equal(csv.statusCode, 200);
     assert.match(String(csv.headers['content-type']), /text\/csv/);
     assert.match(String(csv.headers['content-disposition']), /cloud9-event-conf\.csv/);
@@ -540,7 +556,7 @@ test('events: quizzes eventId filter + invalid_event, sessions carry event, lead
     assert.equal((await t.req('GET', `/api/events/${ev.id}/export.csv`)).statusCode, 401);
     // formula guard: rename bob's latest join to a formula
     t.repo.updatePlayer('x2', { name: '=cmd' });
-    const csv2 = Papa.parse<string[]>((await t.req('GET', `/api/events/${ev.id}/export.csv`, 'alice')).body.replace(/^﻿/, '').trim()).data;
+    const csv2 = Papa.parse<string[]>((await t.req('GET', `/api/events/${ev.id}/export.csv`, 'root')).body.replace(/^﻿/, '').trim()).data;
     assert.equal(csv2[1][1], "'=cmd");
 
     // public board: no auth, top 10, no emails, cached 2s
