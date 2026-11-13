@@ -133,6 +133,8 @@ export interface GameRegistry {
   createSession(input: { quiz: QuizDef; event: EventDef | null; moderatorId: string; label: string; listed: boolean }): SessionSummary;
   /** Live non-FINISHED room count per eventId (for /api/events liveSessions). */
   liveCountByEvent(): Map<string, number>;
+  /** End a session from outside the moderator screen (Telegram). Same as the mod 'end' action: → FINISHED, emits session.finished with actor. */
+  endSession(code: string, actor: string | null): { ok: true } | { ok: false; error: 'not_found' | 'finished' };
   /** Live summary from memory (includes FINISHED rooms still held in memory); null if not in memory. */
   summary(code: string): SessionSummary | null;
   /** All rooms in memory, optionally filtered by moderator. Newest first. */

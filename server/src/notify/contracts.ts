@@ -76,6 +76,8 @@ export interface TgClient {
   call<T = unknown>(method: string, params?: Record<string, unknown>, opts?: { timeoutMs?: number }): Promise<T>;
   /** multipart sendDocument. */
   sendDocument(chatId: string, doc: { filename: string; content: string; mime?: string }, opts?: { caption?: string; threadId?: number | null; buttons?: Button[][] }): Promise<void>;
+  /** multipart sendPhoto (PNG). Used for the session QR code. */
+  sendPhoto(chatId: string, photo: { filename: string; content: Buffer }, opts?: { caption?: string; threadId?: number | null; buttons?: Button[][] }): Promise<void>;
 }
 export class TgError extends Error {
   constructor(message: string, public code: number, public retryAfterSec: number | null, public permanent: boolean) { super(message); }
@@ -92,6 +94,31 @@ export interface CommandRouter {
   handleUpdate(update: any): Promise<void>;   // a Telegram Update (message or callback_query). Never throws.
   commands(): { command: string; description: string }[];  // for setMyCommands
 }
-export type CreateCommandRouter = (deps: { cfg: TelegramConfig; client: TgClient; sender: Sender; repo: Repo; registry: GameRegistry; config: Config }) => CommandRouter;
+export type CreateCommandRouter = (deps: { cfg: TelegramConfig; client: TgClient; sender: Sender; repo: Repo; registry: GameRegistry; config: Config; actions?: ActionHandler }) => CommandRouter;
+//   The router checks admin auth FIRST, then offers every command/callback to `actions` before its own handlers.
+
+// ───────────────────────────── v2: actions from Telegram (admin only, every change needs a confirm tap) ─────────────────────────────
+// Allowed: create a session (LOBBY), joining on/off, hide/show on home page, end a session. NOT allowed: start/close/reveal/next (moderator screen only).
+// Commands:  /newsession [text]  → buttons of the default event's quizzes (filter by text) → tap → preview + [✅ Create] [✖ Cancel]
+//            /joining <code> on|off · /hide <code> · /show <code> · /end <code>   → preview + confirm buttons
+// Callback data (≤64 bytes):
+//   "nsq:<quizId>"  show create-preview for quiz        "nsy:<quizId>"  confirmed → create session
+//   "act:<op>:<code>" show confirm for op                "acy:<op>:<code>" confirmed → do it        op ∈ jon | joff | hide | show | end
+//   "cxl"           cancel (edit the confirm message to "Cancelled")
+// Created sessions: owner = quiz.moderatorId (so the hall moderator runs it), label = "<Hall> · <start time>" parsed from a title like
+//   "Hall 3 · 2:00–2:30 PM · …" (→ "Hall 3 · 2:00 PM"), else ''. listed = true. Reply: text (title, code, join link, projector link
+//   `${publicUrl}/present/<code>`, moderator link `${publicUrl}/mod/room/<code>`) + QR PNG via client.sendPhoto (fallback: text only).
+// Actions emit bus events with actor "telegram:<admin user id>": session.created / session.updated. End → registry.endSession(code, actor)
+//   which makes the room emit session.finished (leaderboard message + CSV as usual).
+// Confirm buttons expire after 10 minutes (store pending confirmations in memory keyed by chatId+data; expired → "This button expired").
+export interface TgCtx { chatId: string; threadId: number | null; isPrivate: boolean }
+export interface ActionHandler {
+  /** Return true if handled. `cmd` without slash/bot suffix, lowercased; `args` raw. */
+  command(ctx: TgCtx, cmd: string, args: string, fromId: string): Promise<boolean>;
+  /** Return true if handled. */
+  callback(ctx: TgCtx, data: string, fromId: string, messageId: number | null): Promise<boolean>;
+  commands(): { command: string; description: string }[];
+}
+export type CreateActions = (deps: { cfg: TelegramConfig; client: TgClient; sender: Sender; repo: Repo; registry: GameRegistry; config: Config; bus: Bus }) => ActionHandler;
 /** Long polling getUpdates (timeout 30, allowed_updates ["message","callback_query"]). Calls deleteWebhook once at start. Backoff on errors. */
 export type StartPoller = (deps: { cfg: TelegramConfig; client: TgClient; router: CommandRouter }) => { stop(): Promise<void> };
