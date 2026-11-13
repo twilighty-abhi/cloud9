@@ -120,12 +120,61 @@ curl -s localhost:3000/healthz          # rooms / sockets / rssMb
 
 **After**
 - Export each room's CSV from the moderator dashboard (includes emails; keep it private).
-- Back up and copy the DB off the server:
+- Back up and copy the DB off the server (see [Backup & restore](#backup--restore)):
   ```bash
-  docker compose exec app node -e "require('better-sqlite3')('/data/cloud9.db').backup('/data/backup-'+Date.now()+'.db').then(()=>console.log('ok'))"
-  scp user@server:~/cloud9/data/backup-*.db .
+  sudo /opt/cloud9/docker/backup.sh                                  # on the server
+  scp <user>@<server>:/var/backups/cloud9/c9-*.db.gz .               # from your laptop
   ```
   (`.backup()` is safe while the app is running; copying `cloud9.db` directly is only safe after `docker compose stop app`.)
+
+## Backup & restore
+
+The database is one SQLite file in WAL mode (`./data/cloud9.db` plus `cloud9.db-wal` / `-shm`). Never back it up with a
+plain `cp` while the app runs: recent results live in the `-wal` file and the copy can be stale or torn.
+
+**Backup** — [`docker/backup.sh`](docker/backup.sh) (run as root on the server, from any directory):
+
+```bash
+sudo /opt/cloud9/docker/backup.sh
+sudo BACKUP_REMOTE=<user>@<laptop-or-box>:/backups/cloud9 /opt/cloud9/docker/backup.sh   # + off-box copy
+```
+
+1. Online `.backup()` inside the app container (players keep playing), into `./data/.backup-tmp/`.
+2. `PRAGMA integrity_check` on the copy; a bad copy is discarded (exit 2).
+3. Moved **out of `./data`** to `BACKUP_DIR` (default `/var/backups/cloud9`, mode 700), gzipped, `chmod 600`.
+4. Keeps the newest `KEEP` (default 14).
+5. Off-box copy if `BACKUP_REMOTE` is set: `user@host:/path` (rsync over SSH, key auth), `rclone:<remote>:<path>`
+   (e.g. Cloudflare R2 / Hetzner Storage Box via rclone), or a mounted directory `/mnt/...`. Failure → exit 3, local copy kept.
+
+Log: `/var/backups/cloud9/backup.log`. Exit codes: `0` ok, `1` config/lock, `2` backup failed, `3` off-box copy failed.
+Schedule it with [`docker/cron.example`](docker/cron.example) (nightly; an every-15-min line for event day is included):
+`sudo cp docker/cron.example /etc/cron.d/cloud9-backup`. A backup on the same disk does not survive losing the server,
+so set `BACKUP_REMOTE` or copy the files to a laptop after each session.
+
+**Restore** — [`docker/restore.sh`](docker/restore.sh):
+
+```bash
+ls -1 /var/backups/cloud9/                                         # pick a backup
+sudo /opt/cloud9/docker/restore.sh /var/backups/cloud9/c9-<time>.db.gz
+```
+
+It unpacks the backup into `./data/.restore-tmp/`, runs `integrity_check` in a one-off container (if the backup is bad
+it stops here and the live app is untouched), asks you to type `RESTORE`, stops the app, moves the current
+`cloud9.db` / `-wal` / `-shm` to `./data/pre-restore-<time>/`, moves the backup in, starts the app and waits for
+`/healthz`. If the swap or start fails it puts the previous files back. Live players are disconnected for a few
+seconds and reconnect. Everything after the backup's time is lost (it is still in `pre-restore-<time>/`).
+
+**Restore drill** (do it once before an event, never on the live box during the event):
+
+```bash
+bash docker/test-backup-restore.sh      # no Docker needed: fake docker shim + real better-sqlite3
+```
+
+The self-test makes a WAL database with committed rows that exist only in the `-wal` file (a plain `cp` sees none),
+backs it up while the writer is still open, checks the rows, file modes, rotation, off-box copy and exit codes, then
+restores it, checks the old DB was moved aside, and checks that a corrupt backup is rejected without touching the live
+DB. On a staging copy of the server, the real drill is: `backup.sh` → note `/healthz` → `restore.sh <that backup>` →
+`/healthz` is ok and the moderator dashboard shows the same quizzes and sessions.
 
 ## Telegram bot (optional)
 

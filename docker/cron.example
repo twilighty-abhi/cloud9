@@ -1,0 +1,16 @@
+# Cloud 9 — scheduled backups. Install:  sudo cp docker/cron.example /etc/cron.d/cloud9-backup && sudo chmod 644 /etc/cron.d/cloud9-backup
+# Edit paths/targets first. Runs as root (reads ./data owned by uid 1000, writes /var/backups/cloud9 mode 700).
+# Exit status: 0 ok, 2 backup failed, 3 off-box copy failed — failures are in /var/backups/cloud9/backup.log.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COMPOSE_DIR=/opt/cloud9
+BACKUP_DIR=/var/backups/cloud9
+# Off-box target (strongly recommended): user@host:/path (rsync+ssh key), rclone:<remote>:<path>, or a mounted /dir.
+# BACKUP_REMOTE=rclone:r2:cloud9-backups
+
+# Nightly at 03:17, keep 14.
+17 3 * * * root KEEP=14 /opt/cloud9/docker/backup.sh >/dev/null 2>&1
+
+# Event day: every 15 minutes between 08:00 and 20:59. KEEP counts all backups, so while this line is on,
+# raise KEEP on the nightly line too (otherwise the 03:17 run trims back to 14).
+# */15 8-20 * * * root KEEP=96 /opt/cloud9/docker/backup.sh >/dev/null 2>&1
