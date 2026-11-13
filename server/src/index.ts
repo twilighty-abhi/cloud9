@@ -2,8 +2,8 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { loadConfig } from './config';
+import { dirname, relative } from 'node:path';
+import { loadConfig, trustedProxy } from './config';
 import { openRepo } from './db/repo';
 import { createAuth } from './auth/index';
 import { createGame } from './game/index';
@@ -18,7 +18,7 @@ async function main() {
   const game = createGame({ repo, config });
   const restored = game.registry.restore();
 
-  const app = Fastify({ trustProxy: (_addr: string, hop: number) => hop < 1, bodyLimit: 2_000_000, logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
+  const app = Fastify({ trustProxy: trustedProxy(process.env.TRUSTED_PROXY), bodyLimit: 2_000_000, logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   app.get('/healthz', async () => {
     const s = game.registry.stats();
@@ -31,14 +31,17 @@ async function main() {
     await app.register(fastifyStatic, {
       root: config.webDist,
       wildcard: false,
-      setHeaders(res, path) {
-        if (path.includes(`${join('assets', '')}`)) res.setHeader('cache-control', 'public, max-age=31536000, immutable');
-        else res.setHeader('cache-control', 'no-cache');
+      cacheControl: false,
+      setHeaders(reply, filePath) {
+        const asset = relative(config.webDist, filePath).split(/[\\/]/)[0] === 'assets';
+        reply.header('cache-control', asset ? 'public, max-age=31536000, immutable' : 'no-cache');
       },
     });
     // SPA fallback for client routes
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/ws')) {
+      const path = req.url.split('?', 1)[0];
+      const page = /^(?:\/(?:join|play)\/[^/]+|\/present\/(?:event\/)?[^/]+|\/mod(?:\/(?:import|quiz\/[^/]+|event\/[^/]+|room\/[^/]+))?)\/?$/.test(path);
+      if ((req.method === 'GET' || req.method === 'HEAD') && page) {
         reply.header('cache-control', 'no-cache');
         return reply.sendFile('index.html');
       }

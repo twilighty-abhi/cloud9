@@ -20,6 +20,8 @@ const config: Config = {
 const fakeAuth: AuthService = {
   verifyLogin: () => null,
   issueCookieValue: () => '',
+  logout: () => {},
+  onLogout: () => () => {},
   moderatorFromRequest: () => null,
   getModerator: () => null,
   moderatorFromCookieHeader(h) {
@@ -431,7 +433,7 @@ function eventQuiz(id: string, eventId: string): QuizDef {
   };
 }
 
-test('events: cumulative board across sessions, top-3 for players, rebind by email, kicked email, forced email', async () => {
+test('events: cumulative board across sessions, top-3 for players, resume by token, kicked email, forced email', async () => {
   const repo = openRepo(':memory:');
   const { registry, port, teardown } = await setup(repo as any);
   const clients: Client[] = [];
@@ -470,17 +472,19 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     const room1 = registry.get(s1.code)!;
     assert.equal(room1.activeCount(), 5);
 
-    // rebind by email (case-insensitive): same player, fresh token, no duplicate
-    const again = join(s1.code, 'Someone else', '  ALICE@x.test ');
+    // token resumes the same player, typed email alone is refused
+    assert.deepEqual(registry.join(s1.code, { name: 'Someone else', email: '  ALICE@x.test ' }), { ok: false, error: 'email_in_use' });
+    const again = registry.join(s1.code, { name: 'Someone else', token: alice.token });
+    assert.ok(again.ok);
     assert.equal(again.rejoined, true);
     assert.equal(again.playerId, alice.playerId);
     assert.equal(again.name, 'Alice');
-    assert.notEqual(again.token, alice.token);
+    assert.equal(again.token, alice.token);
     assert.equal(room1.activeCount(), 5);
     assert.equal(repo.listPlayers(s1.id).length, 5);
     // rebind works even when joining is closed
     registry.patch(s1.code, { joinOpen: false });
-    assert.equal(join(s1.code, 'Bob', 'bob@x.test').rejoined, true);
+    assert.deepEqual(registry.join(s1.code, { name: 'Bob', token: bob.token }), { ...bob, rejoined: true });
     assert.deepEqual(registry.join(s1.code, { name: 'New', email: 'new@x.test' }), { ok: false, error: 'join_closed' });
     registry.patch(s1.code, { joinOpen: true });
 
@@ -488,7 +492,7 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     assert.deepEqual(room1.kick(dave.playerId), { ok: true });
     assert.deepEqual(registry.join(s1.code, { name: 'Dave', email: 'dave@x.test' }), { ok: false, error: 'kicked' });
 
-    // sockets: the rebound token works
+    // sockets: the original token works
     const pa = await connect(port, `role=player&code=${s1.code}&token=${again.token}`);
     const pb = await connect(port, `role=player&code=${s1.code}&token=${bob.token}`);
     const pres1 = await connect(port, `role=present&code=${s1.code}`);
@@ -576,10 +580,10 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
       assert.equal(info3.eventName, 'CCD Kochi');
       assert.equal(info3.emailMode, 'required');
       assert.equal(fresh.summary(s3.code)!.eventId, 'ev1');
-      // rebind-by-email works after restore too
+      // the same token works after restore
       const room2r = fresh.get(s2.code)!;
       assert.ok(room2r);
-      const rj = fresh.join(s2.code, { name: 'x', email: 'eve@x.test' });
+      const rj = fresh.join(s2.code, { name: 'x', token: eve.token });
       assert.ok(rj.ok && rj.rejoined && rj.playerId === eve.playerId);
       assert.equal(repo.listPlayers(s2.id).find((p) => p.id === eve.playerId)!.tokenHash, sha(rj.ok ? rj.token : ''));
     } finally {

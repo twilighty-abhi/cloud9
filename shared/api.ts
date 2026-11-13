@@ -78,12 +78,11 @@ export interface SessionPatch { label?: string; listed?: boolean; joinOpen?: boo
 // GET  /api/public/sessions     → 200 PublicSession[]  (listed && state !== FINISHED; cached ~2s)
 // GET  /api/play/:code          → 200 PlayInfo | 404
 // POST /api/play/:code/join     body JoinReq → 200 JoinRes | 400/403/404/409/429 ApiError
-//        errors: not_found, finished, join_closed, room_full, email_required, invalid_name, invalid_email, rate_limited, kicked
+//        errors: not_found, finished, join_closed, room_full, email_required, invalid_name, invalid_email, email_in_use, rate_limited, kicked
 export interface PlayInfo { code: string; eventName: string | null; title: string; label: string; state: RoomState; emailMode: EmailMode /* EFFECTIVE mode: 'required' if event.emailRequired */; joinOpen: boolean }
-export interface JoinReq { name: string; email?: string }
+export interface JoinReq { name: string; email?: string; token?: string }
 export interface JoinRes { playerId: string; token: string; name: string; rejoined: boolean }
-//   name may get a suffix: "Anu (2)". If a non-kicked player with the SAME email already exists in this session, the server
-//   REBINDS to that player (issues a fresh token, keeps score) and returns rejoined=true. A kicked email stays kicked (403 kicked).
+//   Names may get a suffix. Resume requires the existing room token. Email groups event scores and must be unique within a room.
 
 // GET /healthz → 200 { ok: true, rooms: number, sockets: number, uptimeSec: number, rssMb: number }
 

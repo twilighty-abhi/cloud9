@@ -33,7 +33,7 @@ const imageUrlSchema = z
 export const questionInputSchema = z
   .object({
     text: z
-      .string({ required_error: 'question text is required' })
+      .string({ error: (issue) => issue.input === undefined ? 'question text is required' : undefined })
       .transform((s) => s.trim())
       .pipe(z.string().min(1, 'question text is empty').max(LIMITS.textMax, `question text is longer than ${LIMITS.textMax} characters`)),
     imageUrl: imageUrlSchema,
@@ -43,11 +43,11 @@ export const questionInputSchema = z
           .string()
           .transform((s) => s.trim())
           .pipe(z.string().min(1, 'option is empty').max(LIMITS.optionMax, `option is longer than ${LIMITS.optionMax} characters`)),
-        { required_error: 'options are required' },
+        { error: (issue) => issue.input === undefined ? 'options are required' : undefined },
       )
       .min(2, 'needs at least 2 options')
       .max(4, 'has more than 4 options'),
-    correctIndex: z.number({ required_error: 'correctIndex is required' }).int('correctIndex must be an integer'),
+    correctIndex: z.number({ error: (issue) => issue.input === undefined ? 'correctIndex is required' : undefined }).int('correctIndex must be an integer'),
     timeLimitSec: z
       .number()
       .int('time limit must be a whole number of seconds')
@@ -71,7 +71,7 @@ export const questionInputSchema = z
 
 export const quizInputSchema = z.object({
   title: z
-    .string({ required_error: 'title is required' })
+    .string({ error: (issue) => issue.input === undefined ? 'title is required' : undefined })
     .transform((s) => s.trim())
     .pipe(z.string().min(1, 'title is empty').max(LIMITS.titleMax, `title is longer than ${LIMITS.titleMax} characters`)),
   emailMode: emailModeSchema,
@@ -142,6 +142,8 @@ function parseCorrect(raw: string): number | null {
 export function parseCsvQuestions(content: string): ValidQuizInput['questions'] {
   const text = content.replace(/^﻿/, '');
   const parsed = Papa.parse<string[]>(text, { header: false, skipEmptyLines: false });
+  const error = parsed.errors.find((issue) => issue.code !== 'UndetectableDelimiter');
+  if (error) throw new ImportError(`CSV row ${(error.row ?? 0) + 1}: ${error.message}`);
   const rows = parsed.data;
   // locate header = first non-empty row
   let h = 0;

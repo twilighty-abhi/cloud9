@@ -71,11 +71,13 @@ export interface ModeratorRow { id: string; username: string; displayName: strin
 
 // ───────────────────────────── Repo (Agent B) ─────────────────────────────
 // Synchronous (better-sqlite3). All methods must be safe to call at high frequency.
-// Writes that happen on the hot path (insertPlayer, updatePlayerScore, queueAnswer, updateSession) are cheap single statements
-// or queued; queueAnswer is buffered and flushed in ONE transaction every 100 ms (and on flush()/close()).
+// Live answers and scores are written in one transaction. The buffered write API handles standalone answer imports and fixtures.
 
 export interface Repo {
   upsertModerator(m: ModeratorRow): void;
+  saveModeratorSession(id: string, expires: number): void;
+  hasModeratorSession(id: string, now: number): boolean;
+  deleteModeratorSession(id: string): void;
 
   listQuizzes(moderatorId: string | null, eventId?: string | 'none'): QuizListItem[];
   //   moderatorId null → all moderators. eventId: string → only that event's quizzes (ignores moderatorId filter when caller passes null);
@@ -87,15 +89,16 @@ export interface Repo {
   listEvents(): (EventDef & { quizCount: number; sessionCount: number })[];   // newest first
   deleteEvent(id: string): void;                             // sets quizzes.event_id = NULL for its quizzes, keeps sessions.event_id (history)
   /** Cumulative ranking for an event (see shared/model.ts EventLeaderEntry). Includes emails. One SQL aggregate; must be fast (<5ms @ 5k players). */
-  eventLeaderboard(eventId: string): EventLeaderEntry[];
+  eventLeaderboard(eventId: string, hidePending?: boolean): EventLeaderEntry[];
   getQuiz(id: string): QuizDef | null;
   saveQuiz(q: QuizDef): void;                                // insert or full replace (questions too) in one transaction
   deleteQuiz(id: string): void;
 
   insertSession(s: SessionRow): void;
   updateSession(id: string, patch: Partial<Omit<SessionRow, 'id' | 'quiz'>>): void;
-  listSessions(moderatorId: string | null): SessionRow[];    // newest first
-  loadUnfinishedSessions(): SessionRow[];                    // state !== 'FINISHED'
+  listSessions(moderatorId: string | null, eventId?: string): SessionRow[];    // newest first
+  loadUnfinishedSessions(): SessionRow[];
+  loadRecentFinishedSessions(since: number): SessionRow[];                    // state !== 'FINISHED'
   getLatestSessionByCode(code: string): SessionRow | null;
 
   insertPlayer(p: PlayerRow): void;
@@ -103,6 +106,7 @@ export interface Repo {
   listPlayers(sessionId: string): PlayerRow[];               // join order
   countPlayers(sessionId: string): number;                   // non-kicked
 
+  recordAnswer(a: AnswerRow): boolean;
   queueAnswer(a: AnswerRow): void;                           // buffered
   listAnswers(sessionId: string): AnswerRow[];               // flushes the queue first
   flush(): void;
@@ -117,6 +121,8 @@ export interface Repo {
 export interface AuthService {
   verifyLogin(username: string, password: string): Me | null;
   issueCookieValue(me: Me): string;
+  logout(cookieHeader: string | undefined): void;
+  onLogout(listener: (cookieValue: string) => void): () => void;
   moderatorFromCookieHeader(cookieHeader: string | undefined): Me | null;  // used by the WS upgrade (Agent A)
   moderatorFromRequest(req: FastifyRequest): Me | null;
   getModerator(id: string): Me | null;
@@ -126,13 +132,14 @@ export interface AuthService {
 
 export type JoinResult =
   | { ok: true; playerId: string; token: string; name: string; rejoined: boolean }
-  | { ok: false; error: 'not_found' | 'finished' | 'join_closed' | 'room_full' | 'email_required' | 'invalid_name' | 'invalid_email' | 'kicked' };
+  | { ok: false; error: 'not_found' | 'finished' | 'join_closed' | 'room_full' | 'email_required' | 'invalid_name' | 'invalid_email' | 'email_in_use' | 'kicked' };
 
 export interface GameRegistry {
   /** Creates a room in LOBBY with a fresh unique 6-digit code; persists via repo.insertSession. */
   createSession(input: { quiz: QuizDef; event: EventDef | null; moderatorId: string; label: string; listed: boolean }): SessionSummary;
   /** Live non-FINISHED room count per eventId (for /api/events liveSessions). */
   liveCountByEvent(): Map<string, number>;
+  refreshEvent(id: string, event: EventDef | null): void;
   /** Live summary from memory (includes FINISHED rooms still held in memory); null if not in memory. */
   summary(code: string): SessionSummary | null;
   /** All rooms in memory, optionally filtered by moderator. Newest first. */
@@ -145,7 +152,7 @@ export interface GameRegistry {
   patch(code: string, patch: SessionPatch): SessionSummary | null;
   /** moderatorId owning the room, or null. */
   ownerOf(code: string): string | null;
-  /** Rebuild unfinished rooms from repo at boot. An open QUESTION becomes CLOSED. Returns count restored. */
+  /** Restore unfinished rooms and recently finished results. An open QUESTION becomes CLOSED. */
   restore(): number;
   stats(): { rooms: number; sockets: number };
 }

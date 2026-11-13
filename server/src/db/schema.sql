@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS moderators (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS moderator_sessions (
+  id TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_moderator_sessions_expiry ON moderator_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
   moderator_id TEXT NOT NULL,

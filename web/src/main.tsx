@@ -14,8 +14,8 @@ function App() {
   const path = usePath();
   let m: Record<string, string> | null;
   if (path === '/' || path === '') return <Home />;
-  if ((m = match('/join/:code', path))) return <Play code={m.code} />;
-  if ((m = match('/play/:code', path))) return <Play code={m.code} />;
+  if ((m = match('/join/:code', path))) return <Play key={m.code} code={m.code} />;
+  if ((m = match('/play/:code', path))) return <Play key={m.code} code={m.code} />;
   if ((m = match('/present/event/:id', path))) return <PresentEvent id={m.id} />;
   if ((m = match('/present/:code', path))) return <Present code={m.code} />;
   if (path === '/mod' || path.startsWith('/mod/')) return <ModApp path={path} />;

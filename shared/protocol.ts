@@ -107,6 +107,7 @@ export type ErrorCode =
   | 'bad_transition'
   | 'stale'
   | 'too_late'        // answer after endsAt + grace
+  | 'storage_unavailable' // answer transaction failed, safe to retry
   | 'already_answered'
   | 'rate_limited';
 

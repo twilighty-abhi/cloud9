@@ -110,6 +110,7 @@ export function openRepo(dbPath: string): Repo {
   const db = new Database(dbPath);
   db.exec(SCHEMA_SQL);
   migrate(db);
+  db.pragma('synchronous = FULL');
 
   const st = {
     upsertMod: db.prepare(
@@ -117,6 +118,10 @@ export function openRepo(dbPath: string): Repo {
        ON CONFLICT(id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, is_super = excluded.is_super`,
     ),
     deleteModByUsername: db.prepare(`DELETE FROM moderators WHERE username = ? AND id <> ?`),
+    saveModeratorSession: db.prepare(`INSERT INTO moderator_sessions (id, expires_at) VALUES (?, ?)`),
+    hasModeratorSession: db.prepare(`SELECT 1 FROM moderator_sessions WHERE id = ? AND expires_at > ?`),
+    deleteModeratorSession: db.prepare(`DELETE FROM moderator_sessions WHERE id = ?`),
+    pruneModeratorSessions: db.prepare(`DELETE FROM moderator_sessions WHERE expires_at <= ?`),
     getEvent: db.prepare(`SELECT * FROM events WHERE id = ?`),
     upsertEvent: db.prepare(
       `INSERT INTO events (id, moderator_id, name, email_required, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -137,7 +142,9 @@ export function openRepo(dbPath: string): Repo {
     eventLeaderboard: db.prepare(
       `SELECT
          CASE WHEN p.email IS NOT NULL AND p.email <> '' THEN lower(p.email) ELSE 'p:' || p.id END AS k,
-         SUM(p.score) AS score,
+         SUM(p.score - CASE WHEN ? AND s.state IN ('QUESTION', 'CLOSED') THEN COALESCE((
+           SELECT SUM(a.points) FROM answers a WHERE a.session_id = s.id AND a.player_id = p.id AND a.q_index = s.current_q
+         ), 0) ELSE 0 END) AS score,
          COUNT(DISTINCT p.session_id) AS qp,
          MIN(p.joined_at) AS first_join,
          substr(MAX((p.joined_at + 10000000000000000) || p.name), 18) AS last_name
@@ -189,6 +196,8 @@ export function openRepo(dbPath: string): Repo {
     ),
     listSessionsAll: db.prepare(`SELECT * FROM sessions ORDER BY created_at DESC, rowid DESC LIMIT 100`),
     listSessionsMod: db.prepare(`SELECT * FROM sessions WHERE moderator_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 100`),
+    listSessionsEvent: db.prepare(`SELECT * FROM sessions WHERE event_id = ? AND (? IS NULL OR moderator_id = ?) ORDER BY created_at DESC, rowid DESC LIMIT 100`),
+    recentFinished: db.prepare(`SELECT * FROM sessions WHERE state = 'FINISHED' AND ended_at >= ? ORDER BY created_at DESC, rowid DESC`),
     unfinished: db.prepare(`SELECT * FROM sessions WHERE state <> 'FINISHED' ORDER BY created_at`),
     latestByCode: db.prepare(`SELECT * FROM sessions WHERE code = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`),
     insertPlayer: db.prepare(
@@ -200,8 +209,19 @@ export function openRepo(dbPath: string): Repo {
       `INSERT OR IGNORE INTO answers (session_id, player_id, question_id, q_index, choice, correct, response_ms, points, answered_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
+    addScore: db.prepare(`UPDATE players SET score = score + ? WHERE id = ? AND session_id = ? AND kicked = 0`),
     listAnswers: db.prepare(`SELECT * FROM answers WHERE session_id = ? ORDER BY q_index, answered_at`),
   };
+
+  const recordAnswer = db.transaction((a: AnswerRow) => {
+    const result = st.insertAnswer.run(a.sessionId, a.playerId, a.questionId, a.qIndex, a.choice, b2i(a.correct),
+      Math.round(a.responseMs), Math.round(a.points), a.answeredAt);
+    if (!result.changes) return false;
+    if (st.addScore.run(Math.round(a.points), a.playerId, a.sessionId).changes !== 1) {
+      throw new Error('Answer player is missing or kicked');
+    }
+    return true;
+  });
 
   const updateCache = new Map<string, Database.Statement>();
   function dynUpdate(table: string, cols: Record<string, string>, id: string, patch: Record<string, unknown>) {
@@ -256,6 +276,19 @@ export function openRepo(dbPath: string): Repo {
       })();
     },
 
+    saveModeratorSession(id, expires) {
+      st.pruneModeratorSessions.run(Date.now());
+      st.saveModeratorSession.run(id, expires);
+    },
+
+    hasModeratorSession(id, now) {
+      return !!st.hasModeratorSession.get(id, now);
+    },
+
+    deleteModeratorSession(id) {
+      st.deleteModeratorSession.run(id);
+    },
+
     listQuizzes(moderatorId, eventId) {
       let rows: Row[];
       if (eventId === undefined) rows = (moderatorId === null ? st.listQuizzesAll.all() : st.listQuizzesMod.all(moderatorId)) as Row[];
@@ -286,8 +319,8 @@ export function openRepo(dbPath: string): Repo {
       })();
     },
 
-    eventLeaderboard(eventId) {
-      const rows = st.eventLeaderboard.all(eventId) as Row[];
+    eventLeaderboard(eventId, hidePending = false) {
+      const rows = st.eventLeaderboard.all(b2i(hidePending), eventId) as Row[];
       return rows.map((r, i): EventLeaderEntry => {
         const key = r.k as string;
         return {
@@ -347,13 +380,18 @@ export function openRepo(dbPath: string): Repo {
       dynUpdate('sessions', SESSION_COLS, id, patch as Record<string, unknown>);
     },
 
-    listSessions(moderatorId) {
-      const rows = (moderatorId === null ? st.listSessionsAll.all() : st.listSessionsMod.all(moderatorId)) as Row[];
+    listSessions(moderatorId, eventId) {
+      const rows = (eventId ? st.listSessionsEvent.all(eventId, moderatorId, moderatorId)
+        : moderatorId === null ? st.listSessionsAll.all() : st.listSessionsMod.all(moderatorId)) as Row[];
       return rows.map(rowToSession);
     },
 
     loadUnfinishedSessions() {
       return (st.unfinished.all() as Row[]).map(rowToSession);
+    },
+
+    loadRecentFinishedSessions(since) {
+      return (st.recentFinished.all(since) as Row[]).map(rowToSession);
     },
 
     getLatestSessionByCode(code) {
@@ -376,6 +414,8 @@ export function openRepo(dbPath: string): Repo {
     countPlayers(sessionId) {
       return (st.countPlayers.get(sessionId) as Row).n as number;
     },
+
+    recordAnswer,
 
     queueAnswer(a) {
       if (closed) return;

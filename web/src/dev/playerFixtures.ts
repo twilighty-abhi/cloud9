@@ -6,7 +6,7 @@ import type { PlayInfo } from '../../../shared/api';
 import { query } from '../lib/router';
 
 export function fixtureName(): string | null {
-  try { return query('fixture'); } catch { return null; }
+  return import.meta.env.DEV ? query('fixture') : null;
 }
 
 export function homeFixture(name: string): PublicSession[] | 'loading' | 'error' | null {
