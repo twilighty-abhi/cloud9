@@ -1,0 +1,62 @@
+/* Yuyu Design System tokens (from the "Yuyu Design System" artifact). Owned by lead. */
+:root {
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-body: Figtree, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --yy-bg-canvas: #FFFFFF; --yy-bg-subtle: #FAFAF9; --yy-bg-muted: #F4F4F2; --yy-bg-emphasis: #EFEEEA; --yy-bg-track: #F0EFEB;
+  --yy-border: #E7E6E2; --yy-border-strong: #D4D3CE;
+  --yy-text: #18181B; --yy-text-secondary: #3F3F46; --yy-text-muted: #5F5E5A; --yy-text-disabled: #A1A09A;
+  --yy-primary: #18181B; --yy-on-primary: #FFFFFF; --yy-inverse-surface: #18181B;
+  --yy-accent: #C2410C; --yy-accent-soft: #FAF0EC; --yy-on-accent: #FFFFFF; --yy-accent-text: #C2410C;
+  --yy-success-bg: #DCFCE7; --yy-success-fg: #166534; --yy-success-solid: #15803D;
+  --yy-warning-bg: #FEF3C7; --yy-warning-fg: #92400E; --yy-warning-solid: #F59E0B;
+  --yy-danger-bg: #FEE2E2; --yy-danger-fg: #B91C1C; --yy-danger-border: #FCA5A5; --yy-danger-solid: #B91C1C;
+  --yy-brand-mint: #7EE8C4; --yy-brand-lavender: #B9AEFF;
+  --yy-highlight-mint: #BDF3DF; --yy-highlight-lavender: #DCD6FF; --yy-highlight-peach: #FDE7C8;
+  --yy-tint-mint: #E9FBF3; --yy-tint-lavender: #F1EFFF; --yy-tint-peach: #FFF4E5;
+
+  /* Answer option colours (Cloud 9 addition, built from Yuyu presets): A ember, B iris, C teal, D ink */
+  --c9-opt-0: #C2410C; --c9-opt-1: #4B3FA8; --c9-opt-2: #0F766E; --c9-opt-3: #18181B;
+  --c9-on-opt: #FFFFFF;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
+  --space-8: 32px; --space-10: 40px; --space-12: 48px; --space-16: 64px;
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 20px; --radius-2xl: 24px; --radius-full: 999px;
+  --shadow-raised: 0 1px 2px rgba(24,24,27,0.04), 0 12px 32px rgba(24,24,27,0.06);
+  --shadow-float: 0 1px 2px rgba(24,24,27,0.04), 0 24px 48px rgba(24,24,27,0.08);
+  --duration-press: 120ms; --duration-hover: 180ms; --duration-panel: 240ms; --duration-success: 360ms;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --yy-bg-canvas: #111113; --yy-bg-subtle: #18181B; --yy-bg-muted: #232326; --yy-bg-emphasis: #2A2A2E; --yy-bg-track: #2A2A2E;
+    --yy-border: #2A2A2E; --yy-border-strong: #3F3F46;
+    --yy-text: #F4F4F5; --yy-text-secondary: #D4D4D8; --yy-text-muted: #A1A1AA; --yy-text-disabled: #71717A;
+    --yy-primary: #F4F4F5; --yy-on-primary: #18181B; --yy-inverse-surface: #1C1C1F;
+    --yy-accent-soft: #2A1812; --yy-accent-text: #FB8A5B;
+    --yy-success-bg: #13301F; --yy-success-fg: #86EFAC;
+    --yy-warning-bg: #33270B; --yy-warning-fg: #FCD34D;
+    --yy-danger-bg: #3A1414; --yy-danger-fg: #F87171; --yy-danger-border: #7F1D1D;
+    --yy-highlight-mint: #1F4D3D; --yy-highlight-lavender: #332E5C; --yy-highlight-peach: #4A3418;
+    --yy-tint-mint: #10261E; --yy-tint-lavender: #1C1A33; --yy-tint-peach: #2A1F10;
+    --c9-opt-3: #3F3F46;
+    --shadow-raised: 0 12px 32px rgba(0,0,0,0.5); --shadow-float: 0 24px 48px rgba(0,0,0,0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --yy-bg-canvas: #111113; --yy-bg-subtle: #18181B; --yy-bg-muted: #232326; --yy-bg-emphasis: #2A2A2E; --yy-bg-track: #2A2A2E;
+  --yy-border: #2A2A2E; --yy-border-strong: #3F3F46;
+  --yy-text: #F4F4F5; --yy-text-secondary: #D4D4D8; --yy-text-muted: #A1A1AA; --yy-text-disabled: #71717A;
+  --yy-primary: #F4F4F5; --yy-on-primary: #18181B; --yy-inverse-surface: #1C1C1F;
+  --yy-accent-soft: #2A1812; --yy-accent-text: #FB8A5B;
+  --yy-success-bg: #13301F; --yy-success-fg: #86EFAC;
+  --yy-warning-bg: #33270B; --yy-warning-fg: #FCD34D;
+  --yy-danger-bg: #3A1414; --yy-danger-fg: #F87171; --yy-danger-border: #7F1D1D;
+  --yy-highlight-mint: #1F4D3D; --yy-highlight-lavender: #332E5C; --yy-highlight-peach: #4A3418;
+  --yy-tint-mint: #10261E; --yy-tint-lavender: #1C1A33; --yy-tint-peach: #2A1F10;
+  --c9-opt-3: #3F3F46;
+  --shadow-raised: 0 12px 32px rgba(0,0,0,0.5); --shadow-float: 0 24px 48px rgba(0,0,0,0.5);
+  color-scheme: dark;
+}
