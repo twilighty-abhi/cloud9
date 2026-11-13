@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import type { Me, ImportReq } from '../../../../shared/api';
 import type { QuizDef, EmailMode, ScoringMode } from '../../../../shared/model';
 import { navigate } from '../../lib/router';
-import { mutate, errMsg, ModHeader, Link, fixture } from './common';
+import { mutate, apiErrMsg, ModHeader, Link, fixture, param, useEvents, EventSelect, EmailModeField } from './common';
 
 type Fmt = 'csv' | 'json';
 const guessFmt = (name: string, text: string): Fmt =>
@@ -10,6 +10,11 @@ const guessFmt = (name: string, text: string): Fmt =>
 
 export function Import(props: { me: Me; onLogout: () => void }) {
   const [title, setTitle] = useState('');
+  const [fromEvent] = useState(() => param('event'));
+  const [eventId, setEventId] = useState<string | null>(fromEvent);
+  const { events, error: evErr } = useEvents();
+  const evLocked = !!(eventId && events?.find((e) => e.id === eventId)?.emailRequired);
+  const backHref = fromEvent ? `/mod/event/${encodeURIComponent(fromEvent)}` : '/mod';
   const [mode, setMode] = useState<'file' | 'paste'>('file');
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileText, setFileText] = useState('');
@@ -38,10 +43,10 @@ export function Import(props: { me: Me; onLogout: () => void }) {
     if (!content.trim()) { setErr(mode === 'file' ? 'Choose a .csv or .json file first.' : 'Paste your CSV or JSON first.'); return; }
     setBusy(true); setErr(null);
     try {
-      const body: ImportReq = { title: title.trim(), format: fmt, content, emailMode, scoring };
+      const body: ImportReq = { eventId, title: title.trim(), format: fmt, content, emailMode, scoring };
       const q = await mutate<QuizDef>('POST', '/api/quizzes/import', body);
       navigate(`/mod/quiz/${fixture ? 'q1' : q.id}`);
-    } catch (e2) { setErr(errMsg(e2)); setBusy(false); }
+    } catch (e2) { setErr(apiErrMsg(e2)); setBusy(false); }
   };
 
   const rows = content.trim() ? (fmt === 'csv' ? Math.max(0, content.trim().split(/\r?\n/).length - 1) : null) : null;
@@ -50,7 +55,7 @@ export function Import(props: { me: Me; onLogout: () => void }) {
     <div class="c9-page">
       <ModHeader me={props.me} onLogout={props.onLogout} />
       <main class="c9-m-main c9-m-form">
-        <Link href="/mod" class="yy-btn yy-btn--quiet yy-btn--sm c9-m-back">← Dashboard</Link>
+        <Link href={backHref} class="yy-btn yy-btn--quiet yy-btn--sm c9-m-back">← {fromEvent ? 'Event' : 'Dashboard'}</Link>
         <div class="c9-m-pagehead">
           <h1 class="c9-m-h1">Import a quiz</h1>
           <p class="c9-muted">Bring questions in from a spreadsheet (CSV) or JSON. You can review and edit them afterwards.</p>
@@ -62,6 +67,8 @@ export function Import(props: { me: Me; onLogout: () => void }) {
             <input id="it" class="yy-input" maxLength={120} placeholder="e.g. Cloud Basics Warm-up" value={title}
               onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
           </div>
+
+          <EventSelect value={eventId} events={events} error={evErr} onChange={setEventId} />
 
           <div class="yy-field">
             <span class="yy-label">Questions</span>
@@ -89,14 +96,7 @@ export function Import(props: { me: Me; onLogout: () => void }) {
           </div>
 
           <div class="c9-m-settings__row">
-            <div class="yy-field">
-              <span class="yy-label">Ask players for email</span>
-              <div class="yy-seg" role="tablist">
-                {(['off', 'optional', 'required'] as EmailMode[]).map((m) => (
-                  <button type="button" role="tab" aria-selected={emailMode === m} onClick={() => setEmailMode(m)}>{m[0].toUpperCase() + m.slice(1)}</button>
-                ))}
-              </div>
-            </div>
+            <EmailModeField labelId="iem-l" value={emailMode} locked={evLocked} onChange={setEmailMode} />
             <div class="yy-field">
               <span class="yy-label">Scoring</span>
               <div class="yy-seg" role="tablist">
@@ -110,7 +110,7 @@ export function Import(props: { me: Me; onLogout: () => void }) {
           {err && <div class="c9-m-errors" role="alert"><strong>Import failed.</strong> <span class="c9-m-pre">{err}</span></div>}
 
           <div class="c9-m-formactions">
-            <Link href="/mod" class="yy-btn yy-btn--quiet">Cancel</Link>
+            <Link href={backHref} class="yy-btn yy-btn--quiet">Cancel</Link>
             <button type="submit" class="yy-btn yy-btn--primary" disabled={busy}>{busy ? 'Importing…' : 'Import quiz'}</button>
           </div>
         </form>

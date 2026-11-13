@@ -5,6 +5,7 @@ import type { LeaderEntry } from '../../../../shared/model';
 import { useRoom, useTick, type RoomConn } from '../../lib/ws';
 import { query } from '../../lib/router';
 import { hostFixture } from '../../dev/modFixtures';
+import { presentFixture } from '../../dev/presentFixtures';
 import { LETTERS, qrSrc, fmtNum } from '../mod/common';
 import './present.css';
 import { Brand } from '../../lib/brand';
@@ -12,7 +13,7 @@ import { Brand } from '../../lib/brand';
 type Conn = RoomConn<HostSnapshot>;
 
 export function Present(props: { code: string }) {
-  const [fxSnap] = useState(() => { const f = query('fixture'); return f ? hostFixture(f) : null; });
+  const [fxSnap] = useState(() => { const f = query('fixture'); return f ? (presentFixture(f) ?? hostFixture(f)) : null; });
   const live = useRoom<HostSnapshot>(fxSnap ? null : { role: 'present', code: props.code });
   const conn: Conn = fxSnap ? { snap: fxSnap, status: 'open', fatal: null, lastError: null, now: () => Date.now(), send: () => true } : live;
   const snap = conn.snap;
@@ -56,6 +57,7 @@ export function Present(props: { code: string }) {
     <div class={`c9-pr c9-pr--${snap.state.toLowerCase()}`}>
       <header class="c9-pr-top">
         <span class="c9-pr-logo"><Brand size="lg" /></span>
+        {snap.eventName && <span class="c9-pr-top__event">{snap.eventName}</span>}
         <span class="c9-pr-top__title">{snap.title}{snap.label && <span> · {snap.label}</span>}</span>
         <span class="c9-spacer" />
         {snap.state !== 'LOBBY' && snap.joinOpen && (
@@ -66,8 +68,12 @@ export function Present(props: { code: string }) {
 
       {snap.state === 'LOBBY' && <Lobby snap={snap} shortUrl={shortUrl} />}
       {showQ && <QuestionView conn={conn} snap={snap} />}
-      {snap.state === 'LEADERBOARD' && <Board snap={snap} />}
-      {snap.state === 'FINISHED' && <Podium entries={snap.leaderboard} players={snap.playerCount} />}
+      {snap.eventBoard && (snap.state === 'LEADERBOARD' || snap.state === 'FINISHED')
+        ? <DualBoard snap={snap} ev={snap.eventBoard} />
+        : <>
+          {snap.state === 'LEADERBOARD' && <Board snap={snap} />}
+          {snap.state === 'FINISHED' && <Podium entries={snap.leaderboard} players={snap.playerCount} />}
+        </>}
     </div>
   );
 }
@@ -171,7 +177,36 @@ function Board({ snap }: { snap: HostSnapshot }) {
   );
 }
 
-function Row({ x }: { x: LeaderEntry }) {
+type RowLike = { name: string; score: number; rank: number };
+
+/** Quiz top 10 + event top 10 side by side (LEADERBOARD and FINISHED when the session is in an event). */
+function DualBoard({ snap, ev }: { snap: HostSnapshot; ev: NonNullable<HostSnapshot['eventBoard']> }) {
+  const fin = snap.state === 'FINISHED';
+  const quiz = snap.leaderboard.slice(0, 10);
+  const evTop = ev.top.slice(0, 10);
+  return (
+    <main class="c9-pr-board c9-pr-dual">
+      <div class="c9-pr-board__head">
+        <h1>{fin ? 'Final results' : 'Leaderboard'}</h1>
+        <span class="c9-pr-pill">{fin ? `${fmtNum(snap.playerCount)} players · thanks for playing!` : `After question ${snap.qIndex + 1} / ${snap.total}`}</span>
+      </div>
+      <div class="c9-pr-dual__cols">
+        <section class="c9-pr-dual__col">
+          <h2 class="c9-pr-dual__title">This quiz <span>top 10</span></h2>
+          {quiz.length ? <ol class="c9-pr-lb c9-pr-lb--one">{quiz.map((x) => <Row key={x.playerId} x={x} />)}</ol>
+            : <p class="c9-pr-over">No scores yet.</p>}
+        </section>
+        <section class="c9-pr-dual__col c9-pr-dual__col--event">
+          <h2 class="c9-pr-dual__title">{ev.eventName} leaderboard <span>{fmtNum(ev.total)} players</span></h2>
+          {evTop.length ? <ol class="c9-pr-lb c9-pr-lb--one">{evTop.map((x) => <Row key={`${x.rank}-${x.name}`} x={x} />)}</ol>
+            : <p class="c9-pr-over">Event scores appear after this quiz.</p>}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function Row({ x }: { x: RowLike }) {
   return (
     <li class={`c9-pr-lb__row ${x.rank <= 3 ? `is-r${x.rank}` : ''}`}>
       <span class="c9-pr-lb__rank">{x.rank}</span>

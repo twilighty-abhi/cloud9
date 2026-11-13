@@ -1,6 +1,6 @@
 // In-memory Repo for game engine tests.
 import type { Repo, SessionRow, PlayerRow, AnswerRow, ModeratorRow } from '../src/contracts';
-import type { QuizDef, QuizListItem } from '../../shared/model';
+import type { QuizDef, QuizListItem, EventDef, EventLeaderEntry } from '../../shared/model';
 
 export class FakeRepo implements Repo {
   moderators = new Map<string, ModeratorRow>();
@@ -12,11 +12,43 @@ export class FakeRepo implements Repo {
   sessionUpdates = 0;
 
   upsertModerator(m: ModeratorRow) { this.moderators.set(m.id, { ...m }); }
-  listQuizzes(moderatorId: string | null): QuizListItem[] {
+  events = new Map<string, EventDef>();
+  listQuizzes(moderatorId: string | null, eventId?: string | 'none'): QuizListItem[] {
     return [...this.quizzes.values()]
       .filter((q) => !moderatorId || q.moderatorId === moderatorId)
+      .filter((q) => eventId === undefined || (eventId === 'none' ? !q.eventId : q.eventId === eventId))
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((q) => ({ id: q.id, moderatorId: q.moderatorId, title: q.title, questionCount: q.questions.length, updatedAt: q.updatedAt }));
+      .map((q) => ({ id: q.id, moderatorId: q.moderatorId, eventId: q.eventId ?? null, title: q.title, questionCount: q.questions.length, updatedAt: q.updatedAt }));
+  }
+  saveEvent(e: EventDef) { this.events.set(e.id, { ...e }); }
+  getEvent(id: string) { const e = this.events.get(id); return e ? { ...e } : null; }
+  listEvents() {
+    return [...this.events.values()].sort((a, b) => b.createdAt - a.createdAt).map((e) => ({
+      ...e,
+      quizCount: [...this.quizzes.values()].filter((q) => q.eventId === e.id).length,
+      sessionCount: [...this.sessions.values()].filter((s) => s.eventId === e.id).length,
+    }));
+  }
+  deleteEvent(id: string) {
+    for (const q of this.quizzes.values()) if (q.eventId === id) q.eventId = null;
+    this.events.delete(id);
+  }
+  eventLeaderboard(eventId: string): EventLeaderEntry[] {
+    const agg = new Map<string, { key: string; name: string; email: string | null; score: number; sessions: Set<string>; first: number; last: number }>();
+    for (const p of this.players.values()) {
+      const s = this.sessions.get(p.sessionId);
+      if (!s || s.eventId !== eventId || p.kicked) continue;
+      const key = p.email ? p.email.toLowerCase() : `p:${p.id}`;
+      let a = agg.get(key);
+      if (!a) { a = { key, name: p.name, email: p.email ? key : null, score: 0, sessions: new Set(), first: p.joinedAt, last: p.joinedAt }; agg.set(key, a); }
+      a.score += p.score;
+      a.sessions.add(p.sessionId);
+      if (p.joinedAt < a.first) a.first = p.joinedAt;
+      if (p.joinedAt >= a.last) { a.last = p.joinedAt; a.name = p.name; }
+    }
+    return [...agg.values()]
+      .sort((x, y) => y.score - x.score || x.first - y.first || (x.key < y.key ? -1 : 1))
+      .map((a, i) => ({ key: a.key, name: a.name, email: a.email, score: a.score, quizzesPlayed: a.sessions.size, rank: i + 1 }));
   }
   getQuiz(id: string) { return this.quizzes.get(id) ?? null; }
   saveQuiz(q: QuizDef) { this.quizzes.set(q.id, structuredClone(q)); }
@@ -36,7 +68,7 @@ export class FakeRepo implements Repo {
   getLatestSessionByCode(code: string) { return this.listSessions(null).find((s) => s.code === code) ?? null; }
 
   insertPlayer(p: PlayerRow) { this.players.set(p.id, { ...p }); }
-  updatePlayer(id: string, patch: Partial<Pick<PlayerRow, 'score' | 'kicked' | 'name'>>) {
+  updatePlayer(id: string, patch: Partial<Pick<PlayerRow, 'score' | 'kicked' | 'name' | 'tokenHash'>>) {
     const p = this.players.get(id);
     if (!p) throw new Error('no player ' + id);
     Object.assign(p, patch);

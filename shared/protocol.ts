@@ -83,6 +83,7 @@ export interface HostSnapshot {
   answered: number;              // answers received for the current question
   distribution: number[] | null; // per-option counts; set in CLOSED, REVEAL, LEADERBOARD
   leaderboard: LeaderEntry[];    // top 10 (always present; empty in lobby)
+  eventId: string | null;
   eventName: string | null;
   /** EVENT standings top 10; set in LEADERBOARD and FINISHED when the session belongs to an event, else null. */
   eventBoard: { eventName: string; top: BoardTop[]; total: number } | null;

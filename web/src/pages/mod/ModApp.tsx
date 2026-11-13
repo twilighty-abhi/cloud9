@@ -10,6 +10,7 @@ import { Dashboard } from './Dashboard';
 import { QuizEditor } from './QuizEditor';
 import { Import } from './Import';
 import { Room } from './Room';
+import { EventPage } from './Event';
 import './mod.css';
 
 type AuthState = { kind: 'loading' } | { kind: 'out' } | { kind: 'in'; me: Me } | { kind: 'error'; message: string };
@@ -47,6 +48,7 @@ export function ModApp(props: { path: string }) {
   const onOut = () => setAuth({ kind: 'out' });
   let m: Record<string, string> | null;
   if ((m = match('/mod/room/:code', path))) return <Room code={m.code} me={me} />;
+  if ((m = match('/mod/event/:id', path))) return <EventPage key={m.id} id={m.id} me={me} onLogout={onOut} />;
   if (path === '/mod/quiz/new') return <QuizEditor id={null} me={me} onLogout={onOut} />;
   if ((m = match('/mod/quiz/:id', path))) return <QuizEditor id={m.id} me={me} onLogout={onOut} />;
   if (path === '/mod/import') return <Import me={me} onLogout={onOut} />;

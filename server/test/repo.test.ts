@@ -5,14 +5,14 @@ import type { QuizDef } from '../../shared/model';
 import type { AnswerRow, SessionRow } from '../src/contracts';
 
 const quiz = (id: string, n: number, mod = 'mod_a', updatedAt = 1000): QuizDef => ({
-  id, moderatorId: mod, title: `Quiz ${id}`, emailMode: 'optional', scoring: 'speed', createdAt: 1000, updatedAt,
+  id, moderatorId: mod, eventId: null, title: `Quiz ${id}`, emailMode: 'optional', scoring: 'speed', createdAt: 1000, updatedAt,
   questions: Array.from({ length: n }, (_, i) => ({
     id: `${id}_q${i}`, text: `Q${i}?`, imageUrl: i === 0 ? 'https://x.test/a.png' : null, options: ['a', 'b', 'c'], correctIndex: i % 3, timeLimitSec: 20, pointsMax: 1000,
   })),
 });
 
 const session = (id: string, code: string, q: QuizDef, createdAt = 2000): SessionRow => ({
-  id, code, quizId: q.id, moderatorId: q.moderatorId, label: 'L', listed: true, joinOpen: true, state: 'LOBBY', qIndex: -1,
+  id, code, quizId: q.id, moderatorId: q.moderatorId, eventId: null, label: 'L', listed: true, joinOpen: true, state: 'LOBBY', qIndex: -1,
   qStartedAt: null, qEndsAt: null, quiz: q, createdAt, endedAt: null,
 });
 
@@ -148,4 +148,230 @@ test('close flushes pending answers to file db', async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ───────────── events (v2) ─────────────
+import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pjoin } from 'node:path';
+import type { EventDef } from '../../shared/model';
+
+/** Verbatim schema.sql from before events (HEAD~1 of the events change) — what production DBs look like today. */
+const OLD_SCHEMA_V1 = `
+-- Cloud 9 schema. Applied idempotently at boot by db/repo.ts (Agent B).
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+
+CREATE TABLE IF NOT EXISTS moderators (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  is_super INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quizzes (
+  id TEXT PRIMARY KEY,
+  moderator_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  email_mode TEXT NOT NULL CHECK (email_mode IN ('off','optional','required')),
+  scoring TEXT NOT NULL DEFAULT 'speed' CHECK (scoring IN ('speed','flat')),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS questions (
+  id TEXT PRIMARY KEY,
+  quiz_id TEXT NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  image_url TEXT,
+  options_json TEXT NOT NULL,
+  correct_index INTEGER NOT NULL,
+  time_limit_sec INTEGER NOT NULL DEFAULT 20,
+  points_max INTEGER NOT NULL DEFAULT 1000
+);
+CREATE INDEX IF NOT EXISTS idx_questions_quiz ON questions(quiz_id, position);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL,
+  quiz_id TEXT NOT NULL,
+  moderator_id TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  listed INTEGER NOT NULL DEFAULT 1,
+  join_open INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL,
+  current_q INTEGER NOT NULL DEFAULT -1,
+  q_started_at INTEGER,
+  q_ends_at INTEGER,
+  quiz_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_code ON sessions(code, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
+
+CREATE TABLE IF NOT EXISTS players (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  email TEXT,
+  token_hash TEXT NOT NULL,
+  score INTEGER NOT NULL DEFAULT 0,
+  kicked INTEGER NOT NULL DEFAULT 0,
+  joined_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_players_session ON players(session_id, joined_at);
+
+CREATE TABLE IF NOT EXISTS answers (
+  session_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  question_id TEXT NOT NULL,
+  q_index INTEGER NOT NULL,
+  choice INTEGER NOT NULL,
+  correct INTEGER NOT NULL,
+  response_ms INTEGER NOT NULL,
+  points INTEGER NOT NULL,
+  answered_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, player_id, question_id)
+);
+CREATE INDEX IF NOT EXISTS idx_answers_session_q ON answers(session_id, question_id);
+`;
+
+const ev = (id: string, mod = 'mod_a', createdAt = 1000, emailRequired = true): EventDef =>
+  ({ id, moderatorId: mod, name: `Event ${id}`, emailRequired, createdAt, updatedAt: createdAt });
+
+test('migration: DB created by the old (v1) schema keeps data and gains event columns; idempotent', () => {
+  const dir = mkdtempSync(pjoin(tmpdir(), 'c9mig-'));
+  const file = pjoin(dir, 'old.db');
+  try {
+    const old = new Database(file);
+    old.exec(OLD_SCHEMA_V1);
+    old.prepare(`INSERT INTO moderators (id, username, display_name, is_super, created_at) VALUES ('mod_a','a','A',0,1)`).run();
+    old.prepare(`INSERT INTO quizzes (id, moderator_id, title, email_mode, scoring, created_at, updated_at) VALUES ('z1','mod_a','Old quiz','optional','speed',1,2)`).run();
+    old.prepare(`INSERT INTO questions (id, quiz_id, position, text, image_url, options_json, correct_index, time_limit_sec, points_max)
+                 VALUES ('z1_q0','z1',0,'Q?',NULL,'["a","b"]',1,20,1000)`).run();
+    const snap = JSON.stringify({ id: 'z1', moderatorId: 'mod_a', title: 'Old quiz', emailMode: 'optional', scoring: 'speed', questions: [], createdAt: 1, updatedAt: 2 });
+    old.prepare(`INSERT INTO sessions (id, code, quiz_id, moderator_id, label, listed, join_open, state, current_q, quiz_json, created_at)
+                 VALUES ('s1','123456','z1','mod_a','L',1,1,'LOBBY',-1,?,5)`).run(snap);
+    old.prepare(`INSERT INTO players (id, session_id, name, email, token_hash, score, kicked, joined_at) VALUES ('p1','s1','Anu','anu@x.test','h',700,0,6)`).run();
+    old.prepare(`INSERT INTO answers (session_id, player_id, question_id, q_index, choice, correct, response_ms, points, answered_at)
+                 VALUES ('s1','p1','z1_q0',0,1,1,100,700,7)`).run();
+    old.close();
+
+    for (let round = 0; round < 2; round++) { // second open must be a no-op
+      const repo = openRepo(file);
+      const q = repo.getQuiz('z1')!;
+      assert.equal(q.title, 'Old quiz');
+      assert.equal(q.eventId, null);
+      assert.equal(q.questions.length, 1);
+      assert.equal(repo.listQuizzes('mod_a')[0].eventId, null);
+      assert.equal(repo.listQuizzes('mod_a', 'none').length, 1);
+      const s = repo.getLatestSessionByCode('123456')!;
+      assert.equal(s.eventId, null);
+      assert.equal(s.quiz.eventId, null);
+      assert.equal(repo.loadUnfinishedSessions().length, 1);
+      assert.equal(repo.listPlayers('s1')[0].score, 700);
+      assert.equal(repo.listAnswers('s1').length, 1);
+      // new features work on the migrated DB
+      if (round === 0) {
+        repo.saveEvent(ev('e1'));
+        repo.saveQuiz({ ...q, id: 'z2', eventId: 'e1', questions: q.questions.map((x) => ({ ...x, id: 'z2_' + x.id })) });
+      }
+      assert.equal(repo.listQuizzes(null, 'e1').length, 1);
+      repo.close();
+    }
+    const raw = new Database(file, { readonly: true });
+    const cols = (t: string) => (raw.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+    assert.ok(cols('quizzes').includes('event_id'));
+    assert.ok(cols('sessions').includes('event_id'));
+    const idx = (raw.prepare(`SELECT name FROM sqlite_master WHERE type='index'`).all() as { name: string }[]).map((r) => r.name);
+    for (const n of ['idx_quizzes_event', 'idx_sessions_event', 'idx_players_email']) assert.ok(idx.includes(n), n);
+    raw.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('events: save / get / list counts / delete detaches quizzes, keeps session history', () => {
+  const repo = openRepo(':memory:');
+  repo.saveEvent(ev('e1', 'mod_a', 1000));
+  repo.saveEvent(ev('e2', 'mod_b', 2000, false));
+  assert.deepEqual(repo.getEvent('e2'), ev('e2', 'mod_b', 2000, false));
+  assert.equal(repo.getEvent('nope'), null);
+  repo.saveEvent({ ...ev('e1'), name: 'Renamed', updatedAt: 3000 });
+  assert.equal(repo.getEvent('e1')!.name, 'Renamed');
+
+  const qa = { ...quiz('za', 2, 'mod_a', 1000), eventId: 'e1' };
+  const qb = { ...quiz('zb', 1, 'mod_b', 2000), eventId: 'e1' };
+  const qc = quiz('zc', 1, 'mod_a', 3000);
+  [qa, qb, qc].forEach((q) => repo.saveQuiz(q));
+  assert.equal(repo.getQuiz('za')!.eventId, 'e1');
+  repo.insertSession({ ...session('s1', '111111', qa), eventId: 'e1' });
+  repo.insertSession(session('s2', '222222', qc));
+  assert.equal(repo.getLatestSessionByCode('111111')!.eventId, 'e1');
+  assert.equal(repo.getLatestSessionByCode('222222')!.eventId, null);
+
+  const list = repo.listEvents();
+  assert.deepEqual(list.map((e) => [e.id, e.quizCount, e.sessionCount]), [['e2', 0, 0], ['e1', 2, 1]]);
+
+  // listQuizzes filters
+  assert.deepEqual(repo.listQuizzes(null, 'e1').map((q) => q.id), ['zb', 'za']);
+  assert.deepEqual(repo.listQuizzes('mod_a', 'e1').map((q) => q.id), ['za']);
+  assert.deepEqual(repo.listQuizzes('mod_a', 'none').map((q) => q.id), ['zc']);
+  assert.deepEqual(repo.listQuizzes(null, 'none').map((q) => q.id), ['zc']);
+  assert.deepEqual(repo.listQuizzes('mod_a').map((q) => [q.id, q.eventId]), [['zc', null], ['za', 'e1']]);
+
+  repo.deleteEvent('e1');
+  assert.equal(repo.getEvent('e1'), null);
+  assert.equal(repo.getQuiz('za')!.eventId, null);
+  assert.equal(repo.getQuiz('za')!.questions.length, 2);
+  assert.equal(repo.getLatestSessionByCode('111111')!.eventId, 'e1'); // history kept
+  repo.close();
+});
+
+test('events: leaderboard aggregates by lowercase email, excludes kicked, names from latest join, fast', () => {
+  const repo = openRepo(':memory:');
+  repo.saveEvent(ev('e1'));
+  const q = { ...quiz('za', 1), eventId: 'e1' };
+  repo.saveQuiz(q);
+  repo.insertSession({ ...session('s1', '111111', q, 1), eventId: 'e1' });
+  repo.insertSession({ ...session('s2', '222222', q, 2), eventId: 'e1' });
+  repo.insertSession({ ...session('s3', '333333', q, 3), eventId: null }); // not in event
+  const P = (id: string, sid: string, name: string, email: string | null, score: number, joinedAt: number, kicked = false) =>
+    repo.insertPlayer({ id, sessionId: sid, name, email, tokenHash: 'h' + id, score, kicked, joinedAt });
+  P('a1', 's1', 'Anu', 'anu@x.test', 500, 10);
+  P('a2', 's2', 'Anu K', 'ANU@x.test', 700, 20);
+  P('b1', 's1', 'Bob', 'bob@x.test', 1200, 11);
+  P('c1', 's1', 'NoMail', null, 1200, 12);
+  P('d1', 's2', 'EmptyMail', '', 50, 13);
+  P('k1', 's1', 'Kicked', 'k@x.test', 5000, 14, true);
+  P('o1', 's3', 'Other', 'anu@x.test', 9999, 15);
+  repo.updatePlayer('a2', { score: 800, tokenHash: 'newhash' });
+  assert.equal(repo.listPlayers('s2').find((p) => p.id === 'a2')!.tokenHash, 'newhash');
+
+  const board = repo.eventLeaderboard('e1');
+  assert.deepEqual(board, [
+    { key: 'anu@x.test', name: 'Anu K', email: 'anu@x.test', score: 1300, quizzesPlayed: 2, rank: 1 },
+    { key: 'bob@x.test', name: 'Bob', email: 'bob@x.test', score: 1200, quizzesPlayed: 1, rank: 2 },
+    { key: 'p:c1', name: 'NoMail', email: null, score: 1200, quizzesPlayed: 1, rank: 3 },
+    { key: 'p:d1', name: 'EmptyMail', email: null, score: 50, quizzesPlayed: 1, rank: 4 },
+  ]);
+  assert.deepEqual(repo.eventLeaderboard('nope'), []);
+
+  // perf: 5k players across 10 sessions
+  for (let s = 0; s < 10; s++) repo.insertSession({ ...session(`ps${s}`, String(400000 + s), q, 100 + s), eventId: 'e1' });
+  for (let i = 0; i < 5000; i++) P(`pp${i}`, `ps${i % 10}`, `N${i}`, `u${i % 3000}@load.test`, (i * 37) % 5000, 1000 + i);
+  repo.eventLeaderboard('e1');
+  const t0 = performance.now();
+  const big = repo.eventLeaderboard('e1');
+  const ms = performance.now() - t0;
+  assert.equal(big.length, 4 + 3000);
+  assert.ok(ms < 50, `eventLeaderboard took ${ms.toFixed(1)}ms`);
+  console.log(`# eventLeaderboard @5k players: ${ms.toFixed(2)}ms`);
+  repo.close();
 });

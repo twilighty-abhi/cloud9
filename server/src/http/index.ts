@@ -3,11 +3,11 @@ import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import QRCode from 'qrcode';
 import { z } from 'zod';
-import type { Me, PublicSession, QuizDef, SessionSummary } from '../../../shared/api';
+import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard } from '../../../shared/api';
 import type { RegisterRoutes, RouteDeps, SessionRow } from '../contracts';
 import { COOKIE_NAME, SESSION_TTL_MS } from '../auth/index';
 import { createRateLimiter } from '../util/rateLimit';
-import { slugify } from '../util/csv';
+import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
 import { buildExportCsv } from './exportCsv';
 import {
@@ -39,7 +39,17 @@ const createSessionSchema = z.object({
 const sessionPatchSchema = z
   .object({ label: z.string().max(500).optional(), listed: z.boolean().optional(), joinOpen: z.boolean().optional() })
   .strict();
+const eventIdField = z.union([z.string().min(1).max(100), z.null()]).optional();
+const quizBodySchema = quizInputSchema.extend({ eventId: eventIdField });
+const eventInputSchema = z.object({
+  name: z
+    .string({ required_error: 'name is required' })
+    .transform((s) => s.replace(/\s+/g, ' ').trim())
+    .pipe(z.string().min(1, 'name is empty').max(80, 'name is longer than 80 characters')),
+  emailRequired: z.boolean().optional(),
+});
 const importSchema = z.object({
+  eventId: eventIdField,
   title: z.string().max(500).optional().default(''),
   format: z.enum(['csv', 'json']),
   content: z.string().min(1, 'file is empty').max(2_000_000),
@@ -67,6 +77,7 @@ const JOIN_ERRORS: Record<string, [number, string]> = {
   email_required: [400, 'Email is required for this quiz'],
   invalid_name: [400, 'Please enter a valid name (1–24 characters)'],
   invalid_email: [400, 'Please enter a valid email address'],
+  kicked: [403, 'You were removed from this quiz'],
 };
 
 export const registerRoutes: RegisterRoutes = async (app: FastifyInstance, deps: RouteDeps) => {
@@ -104,11 +115,30 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     if (!canAccess(me, quiz.moderatorId)) fail(403, 'forbidden', 'You do not own this quiz');
     return quiz;
   };
-  const summaryFromRow = (row: SessionRow): SessionSummary => ({
+  /** Per-request memo for event names (summaries of many sessions share few events). */
+  const eventNamer = () => {
+    const memo = new Map<string, string | null>();
+    return (id: string | null): string | null => {
+      if (!id) return null;
+      if (!memo.has(id)) memo.set(id, repo.getEvent(id)?.name ?? null);
+      return memo.get(id)!;
+    };
+  };
+  /** Validates an incoming eventId: undefined → keep `fallback`; null → standalone; string → must exist. */
+  const resolveEventId = (v: string | null | undefined, fallback: string | null): string | null => {
+    if (v === undefined) return fallback;
+    if (v === null) return null;
+    if (!repo.getEvent(v)) fail(400, 'invalid_event', 'Event not found');
+    return v;
+  };
+  const loadEvent = (id: string): EventDef => repo.getEvent(id) ?? fail(404, 'not_found', 'Event not found');
+  const summaryFromRow = (row: SessionRow, nameOf: (id: string | null) => string | null): SessionSummary => ({
     id: row.id,
     code: row.code,
     quizId: row.quizId,
     moderatorId: row.moderatorId,
+    eventId: row.eventId,
+    eventName: nameOf(row.eventId),
     title: row.quiz.title,
     label: row.label,
     state: row.state,
@@ -147,7 +177,12 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   // ───────────── quizzes ─────────────
   api.get('/api/quizzes', async (req) => {
     const me = requireMe(req);
-    return repo.listQuizzes(me.isSuper ? null : me.id);
+    const q = (req.query ?? {}) as { eventId?: unknown };
+    const eventId = typeof q.eventId === 'string' && q.eventId !== '' ? q.eventId.slice(0, 100) : undefined;
+    if (eventId === undefined) return repo.listQuizzes(me.isSuper ? null : me.id);
+    if (eventId === 'none') return repo.listQuizzes(me.isSuper ? null : me.id, 'none');
+    // Events are shared: every moderator sees all quizzes in the event.
+    return repo.listQuizzes(null, eventId);
   });
 
   // must be registered before /api/quizzes/:id (static routes win anyway in find-my-way, but be explicit)
@@ -161,11 +196,13 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
 
   api.post('/api/quizzes', async (req, reply) => {
     const me = requireMe(req);
-    const input = parse(quizInputSchema, req.body);
+    const input = parse(quizBodySchema, req.body);
+    const eventId = resolveEventId(input.eventId, null);
     const now = Date.now();
     const quiz: QuizDef = {
       id: newId('qz'),
       moderatorId: me.id,
+      eventId,
       title: input.title,
       emailMode: input.emailMode,
       scoring: input.scoring,
@@ -180,6 +217,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   api.post('/api/quizzes/import', async (req, reply) => {
     const me = requireMe(req);
     const body = parse(importSchema, req.body);
+    const eventId = resolveEventId(body.eventId, null);
     let raw;
     try {
       raw = buildImport(body.format, body.content, { title: body.title, emailMode: body.emailMode, scoring: body.scoring });
@@ -193,6 +231,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     const quiz: QuizDef = {
       id: newId('qz'),
       moderatorId: me.id,
+      eventId,
       title: input.title,
       emailMode: input.emailMode,
       scoring: input.scoring,
@@ -212,9 +251,11 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   api.put<{ Params: { id: string } }>('/api/quizzes/:id', async (req) => {
     const me = requireMe(req);
     const existing = loadOwnedQuiz(me, req.params.id);
-    const input = parse(quizInputSchema, req.body);
+    const input = parse(quizBodySchema, req.body);
+    const eventId = resolveEventId(input.eventId, existing.eventId ?? null);
     const quiz: QuizDef = {
       ...existing,
+      eventId,
       title: input.title,
       emailMode: input.emailMode,
       scoring: input.scoring,
@@ -238,8 +279,10 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     const body = parse(createSessionSchema, req.body);
     const quiz = loadOwnedQuiz(me, body.quizId);
     if (quiz.questions.length < 1) fail(400, 'invalid_input', 'Quiz has no questions');
+    const event = quiz.eventId ? repo.getEvent(quiz.eventId) : null;
     const summary = registry.createSession({
       quiz,
+      event,
       moderatorId: me.id,
       label: body.label?.trim().slice(0, 60) ?? '',
       listed: body.listed ?? true,
@@ -251,10 +294,91 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   api.get('/api/sessions', async (req) => {
     const me = requireMe(req);
     const rows = repo.listSessions(me.isSuper ? null : me.id).slice(0, 100);
+    const nameOf = eventNamer();
     return rows.map((row) => {
       const live = registry.summary(row.code);
-      return live && live.id === row.id ? live : summaryFromRow(row);
+      return live && live.id === row.id ? live : summaryFromRow(row, nameOf);
     });
+  });
+
+  // ───────────── events (shared across moderators) ─────────────
+  api.get('/api/events', async (req) => {
+    requireMe(req);
+    const live = registry.liveCountByEvent();
+    return repo.listEvents().map((e): EventListItem => ({ ...e, liveSessions: live.get(e.id) ?? 0 }));
+  });
+
+  api.post('/api/events', async (req, reply) => {
+    const me = requireMe(req);
+    const input = parse(eventInputSchema, req.body);
+    const now = Date.now();
+    const event: EventDef = { id: newId('ev'), moderatorId: me.id, name: input.name, emailRequired: input.emailRequired ?? true, createdAt: now, updatedAt: now };
+    repo.saveEvent(event);
+    return reply.code(201).send(event);
+  });
+
+  api.get<{ Params: { id: string } }>('/api/events/:id', async (req): Promise<EventDetail> => {
+    requireMe(req);
+    const event = loadEvent(req.params.id);
+    const quizzes = repo.listQuizzes(null, event.id);
+    // Sessions of this event: live/in-memory rooms first-class, plus persisted history (Repo has no by-event query,
+    // so we filter the newest persisted sessions; in-memory rooms cover everything from the last 6h regardless).
+    const byId = new Map<string, SessionSummary>();
+    for (const s of registry.listSummaries()) if (s.eventId === event.id) byId.set(s.id, s);
+    const nameOf = eventNamer();
+    for (const row of repo.listSessions(null)) {
+      if (row.eventId !== event.id || byId.has(row.id)) continue;
+      const live = registry.summary(row.code);
+      byId.set(row.id, live && live.id === row.id ? live : summaryFromRow(row, nameOf));
+    }
+    const sessions = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    return { event, quizzes, sessions };
+  });
+
+  api.put<{ Params: { id: string } }>('/api/events/:id', async (req) => {
+    const me = requireMe(req);
+    const existing = loadEvent(req.params.id);
+    if (!canAccess(me, existing.moderatorId)) fail(403, 'forbidden', 'Only the event creator can edit this event');
+    const input = parse(eventInputSchema, req.body);
+    const event: EventDef = {
+      ...existing,
+      name: input.name,
+      emailRequired: input.emailRequired ?? existing.emailRequired,
+      updatedAt: Math.max(Date.now(), existing.updatedAt + 1),
+    };
+    repo.saveEvent(event);
+    eventBoardCache.delete(event.id);
+    return event;
+  });
+
+  api.delete<{ Params: { id: string } }>('/api/events/:id', async (req) => {
+    const me = requireMe(req);
+    const existing = loadEvent(req.params.id);
+    if (!canAccess(me, existing.moderatorId)) fail(403, 'forbidden', 'Only the event creator can delete this event');
+    repo.deleteEvent(existing.id);
+    eventBoardCache.delete(existing.id);
+    return { ok: true };
+  });
+
+  api.get<{ Params: { id: string } }>('/api/events/:id/leaderboard', async (req, reply) => {
+    requireMe(req);
+    const event = loadEvent(req.params.id);
+    reply.header('cache-control', 'no-store');
+    return repo.eventLeaderboard(event.id);
+  });
+
+  api.get<{ Params: { id: string } }>('/api/events/:id/export.csv', async (req, reply) => {
+    requireMe(req);
+    const event = loadEvent(req.params.id);
+    const lines = [csvRow(['rank', 'name', 'email', 'score', 'quizzes_played'])];
+    for (const e of repo.eventLeaderboard(event.id)) lines.push(csvRow([e.rank, e.name, e.email ?? '', e.score, e.quizzesPlayed]));
+    const filename = `cloud9-event-${slugify(event.name)}.csv`;
+    reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${filename}"`)
+      .header('cache-control', 'no-store');
+    // BOM so Excel opens UTF-8 names correctly
+    return reply.send('\uFEFF' + lines.join('\r\n') + '\r\n');
   });
 
   api.patch('/api/sessions/:code', async (req) => {
@@ -300,6 +424,28 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   });
 
   // ───────────── public / player ─────────────
+  const eventBoardCache = new Map<string, { at: number; data: PublicEventBoard }>();
+  api.get<{ Params: { id: string } }>('/api/public/events/:id/leaderboard', async (req, reply) => {
+    const id = String(req.params.id ?? '').slice(0, 100);
+    const now = Date.now();
+    let hit = eventBoardCache.get(id);
+    if (!hit || now - hit.at > PUBLIC_CACHE_MS) {
+      const event = loadEvent(id);
+      const list = repo.eventLeaderboard(event.id);
+      const data: PublicEventBoard = {
+        eventName: event.name,
+        top: list.slice(0, 10).map((e) => ({ name: e.name, score: e.score, rank: e.rank, quizzesPlayed: e.quizzesPlayed })),
+        total: list.length,
+        updatedAt: now,
+      };
+      if (eventBoardCache.size >= 500) eventBoardCache.clear();
+      hit = { at: now, data };
+      eventBoardCache.set(id, hit);
+    }
+    reply.header('cache-control', 'no-store');
+    return hit.data;
+  });
+
   let publicCache: { at: number; data: PublicSession[] } | null = null;
   api.get('/api/public/sessions', async (_req, reply) => {
     const now = Date.now();
@@ -333,6 +479,6 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
       fail(status, res.error, message);
     }
     const ok = res as Extract<typeof res, { ok: true }>;
-    return { playerId: ok.playerId, token: ok.token, name: ok.name };
+    return { playerId: ok.playerId, token: ok.token, name: ok.name, rejoined: ok.rejoined };
   });
 }

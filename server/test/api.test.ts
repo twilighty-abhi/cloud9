@@ -301,7 +301,7 @@ test('sessions: create, list, patch, qr, public list, play + join mapping, expor
     // public list cached
     const pub1 = await t.req('GET', '/api/public/sessions');
     assert.equal(pub1.headers['cache-control'], 'no-store');
-    assert.deepEqual(Object.keys(pub1.json()[0]).sort(), ['code', 'joinOpen', 'label', 'players', 'qIndex', 'state', 'title', 'total']);
+    assert.deepEqual(Object.keys(pub1.json()[0]).sort(), ['code', 'eventName', 'joinOpen', 'label', 'players', 'qIndex', 'state', 'title', 'total']);
     const calls = t.registry.publicListCalls;
     await t.req('GET', '/api/public/sessions');
     assert.equal(t.registry.publicListCalls, calls);
@@ -316,7 +316,7 @@ test('sessions: create, list, patch, qr, public list, play + join mapping, expor
     const join = (c: string, body: unknown) => t.req('POST', `/api/play/${c}/join`, undefined, body, `172.16.0.${++ip}`);
     const j1 = await join(live, { name: 'Anu', email: 'anu@example.com' });
     assert.equal(j1.statusCode, 200, j1.body);
-    assert.deepEqual(Object.keys(j1.json()).sort(), ['name', 'playerId', 'token']);
+    assert.deepEqual(Object.keys(j1.json()).sort(), ['name', 'playerId', 'rejoined', 'token']);
     assert.equal((await join(live, { name: 'Anu' })).json().name, 'Anu (2)');
     await join(live, { name: '=SUM(A1)', email: '' });
     const expectErr = async (c: string, body: unknown, status: number, error: string) => {
@@ -378,4 +378,193 @@ test('sessions: create, list, patch, qr, public list, play + join mapping, expor
     assert.equal(parsed[3][1], "'=SUM(A1)");
     assert.equal((await t.req('GET', `/api/sessions/${live}/export.csv`, 'root')).statusCode, 200);
   } finally { await t.close(); }
+});
+
+// ───────────── events ─────────────
+test('events: CRUD, ownership, list counts, validation', async () => {
+  const t = await setup();
+  try {
+    await t.login('alice', 'pw-alice');
+    await t.login('bob', 'pw-bob');
+    await t.login('root', 'pw:root');
+    assert.equal((await t.req('GET', '/api/events')).statusCode, 401);
+    assert.equal((await t.req('POST', '/api/events', undefined, { name: 'X' })).statusCode, 401);
+    assert.equal((await t.req('POST', '/api/events', 'alice', { name: '   ' })).statusCode, 400);
+    assert.equal((await t.req('POST', '/api/events', 'alice', { name: 'x'.repeat(81) })).statusCode, 400);
+    assert.equal((await t.req('POST', '/api/events', 'alice', { name: 'ok', emailRequired: 'yes' })).statusCode, 400);
+    const cr = await t.req('POST', '/api/events', 'alice', { name: '  CCD   Kochi  ' });
+    assert.equal(cr.statusCode, 201, cr.body);
+    const ev = cr.json();
+    assert.equal(ev.name, 'CCD Kochi');
+    assert.equal(ev.emailRequired, true);
+    assert.equal(ev.moderatorId, 'mod_alice');
+    const ev2 = (await t.req('POST', '/api/events', 'bob', { name: 'Side', emailRequired: false })).json();
+    assert.equal(ev2.emailRequired, false);
+
+    // shared: bob lists + views alice's event
+    const list = (await t.req('GET', '/api/events', 'bob')).json();
+    assert.deepEqual(list.map((e: any) => e.id), [ev2.id, ev.id]);
+    assert.deepEqual([list[1].quizCount, list[1].sessionCount, list[1].liveSessions], [0, 0, 0]);
+    const det = await t.req('GET', `/api/events/${ev.id}`, 'bob');
+    assert.equal(det.statusCode, 200);
+    assert.deepEqual(det.json(), { event: ev, quizzes: [], sessions: [] });
+    assert.equal((await t.req('GET', '/api/events/nope', 'bob')).statusCode, 404);
+
+    // only creator or super may edit/delete
+    assert.equal((await t.req('PUT', `/api/events/${ev.id}`, 'bob', { name: 'Hijack' })).statusCode, 403);
+    assert.equal((await t.req('DELETE', `/api/events/${ev.id}`, 'bob')).statusCode, 403);
+    assert.equal((await t.req('PUT', `/api/events/nope`, 'alice', { name: 'x' })).statusCode, 404);
+    const up = await t.req('PUT', `/api/events/${ev.id}`, 'alice', { name: 'CCD Kochi 26' });
+    assert.equal(up.statusCode, 200);
+    assert.equal(up.json().name, 'CCD Kochi 26');
+    assert.equal(up.json().emailRequired, true); // omitted → unchanged
+    const up2 = await t.req('PUT', `/api/events/${ev.id}`, 'root', { name: 'CCD Kochi 26', emailRequired: false });
+    assert.equal(up2.statusCode, 200);
+    assert.equal(up2.json().emailRequired, false);
+    assert.equal((await t.req('DELETE', `/api/events/${ev2.id}`, 'root')).statusCode, 200);
+    assert.equal(t.repo.getEvent(ev2.id), null);
+  } finally {
+    await t.close();
+  }
+});
+
+test('events: quizzes eventId filter + invalid_event, sessions carry event, leaderboard, export, public board, join', async () => {
+  const t = await setup();
+  try {
+    await t.login('alice', 'pw-alice');
+    await t.login('bob', 'pw-bob');
+    await t.login('root', 'pw:root');
+    const ev = (await t.req('POST', '/api/events', 'alice', { name: 'Conf' })).json();
+
+    // quiz eventId validation
+    const bad = await t.req('POST', '/api/quizzes', 'alice', { ...sampleQuiz(), eventId: 'ev_missing' });
+    assert.equal(bad.statusCode, 400);
+    assert.equal(bad.json().error, 'invalid_event');
+    const badImp = await t.req('POST', '/api/quizzes/import', 'alice', { title: 'I', format: 'json', content: JSON.stringify(sampleQuiz().questions), eventId: 'nope' });
+    assert.equal(badImp.json().error, 'invalid_event');
+
+    const qa = (await t.req('POST', '/api/quizzes', 'alice', { ...sampleQuiz('A in event'), eventId: ev.id })).json();
+    assert.equal(qa.eventId, ev.id);
+    const qs = (await t.req('POST', '/api/quizzes', 'alice', sampleQuiz('A standalone'))).json();
+    assert.equal(qs.eventId, null);
+    const imp = await t.req('POST', '/api/quizzes/import', 'bob', { title: 'B in event', format: 'json', content: JSON.stringify(sampleQuiz().questions), eventId: ev.id });
+    assert.equal(imp.statusCode, 201, imp.body);
+    const qb = imp.json();
+    assert.equal(qb.eventId, ev.id);
+    const qb2 = (await t.req('POST', '/api/quizzes', 'bob', sampleQuiz('B standalone'))).json();
+
+    const ids = (r: any) => r.json().map((q: any) => q.id).sort();
+    assert.deepEqual(ids(await t.req('GET', `/api/quizzes?eventId=${ev.id}`, 'alice')), [qa.id, qb.id].sort());
+    assert.deepEqual(ids(await t.req('GET', `/api/quizzes?eventId=${ev.id}`, 'bob')), [qa.id, qb.id].sort());
+    assert.deepEqual(ids(await t.req('GET', `/api/quizzes?eventId=none`, 'alice')), [qs.id]);
+    assert.deepEqual(ids(await t.req('GET', `/api/quizzes?eventId=none`, 'root')), [qs.id, qb2.id].sort());
+    assert.deepEqual(ids(await t.req('GET', `/api/quizzes`, 'alice')), [qa.id, qs.id].sort()); // unchanged: own
+    assert.equal((await t.req('GET', `/api/quizzes`, 'alice')).json().find((q: any) => q.id === qa.id).eventId, ev.id);
+
+    // editing someone else's quiz is still forbidden even in a shared event
+    assert.equal((await t.req('PUT', `/api/quizzes/${qa.id}`, 'bob', sampleQuiz('x'))).statusCode, 403);
+    assert.equal((await t.req('GET', `/api/quizzes/${qa.id}`, 'bob')).statusCode, 403);
+    // PUT without eventId keeps it; invalid → 400; null detaches; re-attach
+    assert.equal((await t.req('PUT', `/api/quizzes/${qa.id}`, 'alice', sampleQuiz('A2'))).json().eventId, ev.id);
+    assert.equal((await t.req('PUT', `/api/quizzes/${qa.id}`, 'alice', { ...sampleQuiz('A2'), eventId: 'zz' })).json().error, 'invalid_event');
+    assert.equal((await t.req('PUT', `/api/quizzes/${qs.id}`, 'alice', { ...sampleQuiz('S'), eventId: null })).json().eventId, null);
+    assert.equal((await t.req('PUT', `/api/quizzes/${qs.id}`, 'alice', { ...sampleQuiz('S'), eventId: ev.id })).json().eventId, ev.id);
+    assert.equal((await t.req('PUT', `/api/quizzes/${qs.id}`, 'alice', { ...sampleQuiz('S'), eventId: null })).json().eventId, null);
+
+    // sessions get the event
+    const s1 = (await t.req('POST', '/api/sessions', 'alice', { quizId: qa.id, label: 'Hall A' })).json();
+    assert.equal(t.registry.lastCreateEvent?.id, ev.id);
+    assert.equal(s1.eventId, ev.id);
+    assert.equal(s1.eventName, 'Conf');
+    const sStand = (await t.req('POST', '/api/sessions', 'alice', { quizId: qs.id })).json();
+    assert.equal(t.registry.lastCreateEvent, null);
+    assert.equal(sStand.eventId, null);
+    const s2 = (await t.req('POST', '/api/sessions', 'bob', { quizId: qb.id, label: 'Hall B' })).json();
+    const evs = (await t.req('GET', '/api/events', 'bob')).json();
+    assert.deepEqual([evs[0].quizCount, evs[0].sessionCount, evs[0].liveSessions], [2, 2, 2]);
+    t.registry.setState(s2.code, 'FINISHED');
+    assert.equal((await t.req('GET', '/api/events', 'bob')).json()[0].liveSessions, 1);
+    const det = (await t.req('GET', `/api/events/${ev.id}`, 'bob')).json();
+    assert.deepEqual(det.quizzes.map((q: any) => q.id).sort(), [qa.id, qb.id].sort());
+    assert.deepEqual(det.sessions.map((s: any) => s.code).sort(), [s1.code, s2.code].sort());
+    // persisted-only sessions show up too (room evicted from memory) with eventName
+    t.registry.rooms.delete(s2.code);
+    const det2 = (await t.req('GET', `/api/events/${ev.id}`, 'alice')).json();
+    assert.equal(det2.sessions.length, 2);
+    assert.equal(det2.sessions.find((s: any) => s.code === s2.code).eventName, 'Conf');
+    assert.equal((await t.req('GET', '/api/sessions', 'bob')).json()[0].eventName, 'Conf');
+
+    // play info: effective email mode
+    const pi = (await t.req('GET', `/api/play/${s1.code}`)).json();
+    assert.equal(pi.eventName, 'Conf');
+    assert.equal(pi.emailMode, 'required');
+    // join: rejoined + kicked mapping
+    const j1 = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'Anu', email: 'anu@x.test' }, '10.9.0.1');
+    assert.equal(j1.statusCode, 200);
+    assert.equal(j1.json().rejoined, false);
+    const j2 = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'Anu', email: 'ANU@x.test' }, '10.9.0.1');
+    assert.equal(j2.json().rejoined, true);
+    assert.equal(j2.json().playerId, j1.json().playerId);
+    const jk = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'K', email: 'kicked@x.test' }, '10.9.0.1');
+    assert.equal(jk.statusCode, 403);
+    assert.equal(jk.json().error, 'kicked');
+
+    // leaderboard data: add players directly
+    const sid1 = s1.id, sid2 = s2.id;
+    const P = (id: string, sid: string, name: string, email: string | null, score: number, joinedAt: number) =>
+      t.repo.insertPlayer({ id, sessionId: sid, name, email, tokenHash: 'h' + id, score, kicked: false, joinedAt });
+    P('x1', sid1, '=HYPERLINK("evil")', 'bob@x.test', 900, 1);
+    P('x2', sid2, 'Bobby', 'bob@x.test', 600, 2);
+    P('x3', sid2, 'Zed', 'zed@x.test', 1000, 3);
+    for (let i = 0; i < 12; i++) P(`y${i}`, sid2, `Y${i}`, `y${i}@x.test`, 10 + i, 10 + i);
+    t.repo.updatePlayer(j1.json().playerId, { score: 50 });
+
+    const lb = await t.req('GET', `/api/events/${ev.id}/leaderboard`, 'bob');
+    assert.equal(lb.statusCode, 200);
+    const rows = lb.json();
+    assert.equal(rows.length, 15); // bob, zed, anu, 12 y's
+    assert.deepEqual(rows[0], { key: 'bob@x.test', name: 'Bobby', email: 'bob@x.test', score: 1500, quizzesPlayed: 2, rank: 1 });
+    assert.equal(rows[1].key, 'zed@x.test');
+    assert.equal((await t.req('GET', `/api/events/${ev.id}/leaderboard`)).statusCode, 401);
+    assert.equal((await t.req('GET', `/api/events/nope/leaderboard`, 'bob')).statusCode, 404);
+
+    const csv = await t.req('GET', `/api/events/${ev.id}/export.csv`, 'bob');
+    assert.equal(csv.statusCode, 200);
+    assert.match(String(csv.headers['content-type']), /text\/csv/);
+    assert.match(String(csv.headers['content-disposition']), /cloud9-event-conf\.csv/);
+    assert.ok(csv.body.startsWith('﻿'));
+    const parsed = Papa.parse<string[]>(csv.body.replace(/^﻿/, '').trim()).data;
+    assert.deepEqual(parsed[0], ['rank', 'name', 'email', 'score', 'quizzes_played']);
+    assert.deepEqual(parsed[1], ['1', 'Bobby', 'bob@x.test', '1500', '2']);
+    assert.equal(parsed.length, 16);
+    assert.equal((await t.req('GET', `/api/events/${ev.id}/export.csv`)).statusCode, 401);
+    // formula guard: rename bob's latest join to a formula
+    t.repo.updatePlayer('x2', { name: '=cmd' });
+    const csv2 = Papa.parse<string[]>((await t.req('GET', `/api/events/${ev.id}/export.csv`, 'alice')).body.replace(/^﻿/, '').trim()).data;
+    assert.equal(csv2[1][1], "'=cmd");
+
+    // public board: no auth, top 10, no emails, cached 2s
+    const pub = await t.req('GET', `/api/public/events/${ev.id}/leaderboard`);
+    assert.equal(pub.statusCode, 200);
+    const pb = pub.json();
+    assert.equal(pb.eventName, 'Conf');
+    assert.equal(pb.top.length, 10);
+    assert.equal(pb.total, 15);
+    assert.deepEqual(Object.keys(pb.top[0]).sort(), ['name', 'quizzesPlayed', 'rank', 'score']);
+    assert.ok(!pub.body.includes('@'));
+    assert.equal(typeof pb.updatedAt, 'number');
+    P('late', sid2, 'Late', 'late@x.test', 5, 100);
+    assert.equal((await t.req('GET', `/api/public/events/${ev.id}/leaderboard`)).json().total, 15); // cached
+    assert.equal((await t.req('GET', `/api/public/events/nope/leaderboard`)).statusCode, 404);
+
+    // delete event: quizzes detached, not deleted; sessions keep history
+    assert.equal((await t.req('DELETE', `/api/events/${ev.id}`, 'alice')).statusCode, 200);
+    assert.equal((await t.req('GET', `/api/quizzes/${qa.id}`, 'alice')).json().eventId, null);
+    assert.equal((await t.req('GET', `/api/quizzes/${qb.id}`, 'bob')).json().eventId, null);
+    assert.equal(t.repo.getLatestSessionByCode(s1.code)!.eventId, ev.id);
+    assert.equal((await t.req('GET', `/api/public/events/${ev.id}/leaderboard`)).statusCode, 404);
+    assert.equal((await t.req('GET', `/api/events/${ev.id}`, 'alice')).statusCode, 404);
+  } finally {
+    await t.close();
+  }
 });

@@ -1,12 +1,20 @@
 // Cloud 9 — one live room: state machine, scoring, snapshots, broadcasting.
 import type { WebSocket } from 'ws';
-import { scoreAnswer, DEFAULTS, type QuizDef, type RoomState, type LeaderEntry, type SessionSummary, type PublicSession } from '../../../shared/model';
+import {
+  scoreAnswer, DEFAULTS, type QuizDef, type RoomState, type LeaderEntry, type SessionSummary, type PublicSession,
+  type EventDef, type EventLeaderEntry, type BoardTop, type EmailMode,
+} from '../../../shared/model';
 import type { PlayerSnapshot, HostSnapshot, QuestionPublic, ModAction, ErrorCode, ServerMsg } from '../../../shared/protocol';
 import { WS_CLOSE } from '../../../shared/protocol';
 import type { Repo, SessionRow, PlayerRow, AnswerRow } from '../contracts';
 import { sendRaw, sendMsg, safeClose } from '../realtime/send';
 
 const DELTA_INTERVAL_MS = 250; // max 4 deltas / s / room
+const PLAYER_TOP = 3;           // players see only the top 3 of the quiz / event boards
+const EVENT_BOARD_REUSE_MS = 2000; // single-socket sends (connect/reconnect) reuse the last event board for this long
+
+/** Event standings computed once per broadcast and shared by every socket. */
+interface EventStandings { v: number; at: number; list: EventLeaderEntry[]; byKey: Map<string, EventLeaderEntry> }
 
 export interface PlayerAnswer { choice: number; correct: boolean; points: number; responseMs: number }
 
@@ -33,6 +41,9 @@ export class Room {
   readonly quiz: QuizDef;
   readonly moderatorId: string;
   readonly createdAt: number;
+  readonly eventId: string | null;
+  readonly eventName: string | null;
+  readonly eventEmailRequired: boolean;
   label: string;
   listed: boolean;
   joinOpen: boolean;
@@ -59,9 +70,17 @@ export class Room {
   private progressDirty = false;
   private ranking: Ranked[] | null = null;
   private rankOf: Map<string, number> | null = null;
+  private eventCache: EventStandings | null = null;
 
-  constructor(private readonly repo: Repo, private readonly joinUrlBase: string, private readonly graceMs: number, row: SessionRow) {
+  constructor(
+    private readonly repo: Repo, private readonly joinUrlBase: string, private readonly graceMs: number, row: SessionRow,
+    event: EventDef | null = null,
+  ) {
     this.id = row.id;
+    this.eventId = row.eventId ?? null;
+    // eventName is null if the event was deleted (then no event board is shown, but sessions.event_id keeps history)
+    this.eventName = event && this.eventId === event.id ? event.name : null;
+    this.eventEmailRequired = !!(event && this.eventId === event.id && event.emailRequired);
     this.code = row.code;
     this.quiz = row.quiz;
     this.moderatorId = row.moderatorId;
@@ -81,6 +100,8 @@ export class Room {
 
   get total(): number { return this.quiz.questions.length; }
   get joinUrl(): string { return `${this.joinUrlBase}/join/${this.code}`; }
+  /** Effective email mode: an event with emailRequired forces 'required' regardless of the quiz's own mode. */
+  get emailMode(): EmailMode { return this.eventEmailRequired ? 'required' : this.quiz.emailMode; }
 
   activeCount(): number {
     let n = 0;
@@ -95,6 +116,71 @@ export class Room {
   }
 
   findByTokenHash(hash: string): PlayerMem | null { return this.byToken.get(hash) ?? null; }
+
+  /** Player with this (lowercase) email: a non-kicked one wins; otherwise a kicked one; else null. */
+  findByEmail(email: string): PlayerMem | null {
+    let kicked: PlayerMem | null = null;
+    for (const p of this.players.values()) {
+      if (p.email !== email) continue;
+      if (!p.kicked) return p;
+      kicked ??= p;
+    }
+    return kicked;
+  }
+
+  /** Rejoin by email: register a fresh token for an existing player (the previous token keeps working in memory). */
+  rebindToken(p: PlayerMem, tokenHash: string): void {
+    p.tokenHash = tokenHash;
+    this.byToken.set(tokenHash, p);
+  }
+
+  /** Event identity key for a player (matches repo.eventLeaderboard keys). */
+  private eventKey(p: PlayerMem): string { return p.email ? p.email : `p:${p.id}`; }
+
+  private showBoards(): boolean { return this.state === 'LEADERBOARD' || this.state === 'FINISHED'; }
+
+  /**
+   * Event standings for the current state, or null (no event / not a leaderboard state / repo failure).
+   * fresh=true recomputes (one SQL aggregate) — used once per broadcast; otherwise a recent result for this v is reused.
+   */
+  private eventStandings(fresh: boolean): EventStandings | null {
+    if (!this.eventId || this.eventName === null || !this.showBoards()) return null;
+    const now = Date.now();
+    const c = this.eventCache;
+    if (!fresh && c && c.v === this.v && now - c.at < EVENT_BOARD_REUSE_MS) return c;
+    try {
+      const list = this.repo.eventLeaderboard(this.eventId);
+      const byKey = new Map<string, EventLeaderEntry>();
+      for (const e of list) byKey.set(e.key, e);
+      this.eventCache = { v: this.v, at: now, list, byKey };
+      return this.eventCache;
+    } catch (e) {
+      console.error(`[game] repo.eventLeaderboard failed (room ${this.code})`, e);
+      return null;
+    }
+  }
+
+  private static boardTop(list: EventLeaderEntry[], n: number): BoardTop[] {
+    const out: BoardTop[] = [];
+    for (let i = 0; i < list.length && i < n; i++) out.push({ name: list[i].name, score: list[i].score, rank: list[i].rank });
+    return out;
+  }
+
+  private hostEventBoard(ev: EventStandings | null): HostSnapshot['eventBoard'] {
+    if (!ev || this.eventName === null) return null;
+    return { eventName: this.eventName, top: Room.boardTop(ev.list, DEFAULTS.leaderboardSize), total: ev.list.length };
+  }
+
+  private playerEventBoard(p: PlayerMem, ev: EventStandings | null, top: BoardTop[] | null): PlayerSnapshot['eventBoard'] {
+    if (!ev || this.eventName === null) return null;
+    const mine = ev.byKey.get(this.eventKey(p));
+    return {
+      eventName: this.eventName,
+      top: top ?? Room.boardTop(ev.list, PLAYER_TOP),
+      me: mine ? { rank: mine.rank, score: mine.score } : null,
+      total: ev.list.length,
+    };
+  }
 
   private safeRepo(what: string, fn: () => void): void {
     try { fn(); } catch (e) { console.error(`[game] repo.${what} failed (room ${this.code})`, e); }
@@ -175,7 +261,7 @@ export class Room {
 
   // ───────────── snapshots ─────────────
 
-  hostSnapshot(role: 'mod' | 'present'): HostSnapshot {
+  hostSnapshot(role: 'mod' | 'present', ev: EventStandings | null = this.eventStandings(false)): HostSnapshot {
     const question = this.currentQuestion();
     const q = question ? this.quiz.questions[this.qIndex] : undefined;
     const showCorrect = role === 'mod' || this.state === 'REVEAL' || this.state === 'LEADERBOARD';
@@ -206,11 +292,17 @@ export class Room {
       answered: question ? this.answered : 0,
       distribution: question && showDist ? [...this.distribution] : null,
       leaderboard: this.state === 'LOBBY' ? [] : this.leaderboard(),
+      eventId: this.eventId,
+      eventName: this.eventName,
+      eventBoard: this.hostEventBoard(ev),
       nextQuestion,
     };
   }
 
-  playerSnapshot(p: PlayerMem, playerCount = this.activeCount(), lb?: LeaderEntry[] | null): PlayerSnapshot {
+  playerSnapshot(
+    p: PlayerMem, playerCount = this.activeCount(), lb?: LeaderEntry[] | null,
+    ev: EventStandings | null = this.eventStandings(false), evTop: BoardTop[] | null = null,
+  ): PlayerSnapshot {
     const question = this.currentQuestion();
     const q = question ? this.quiz.questions[this.qIndex] : undefined;
     const a = question ? p.answers.get(this.qIndex) : undefined;
@@ -219,6 +311,7 @@ export class Room {
     return {
       role: 'player',
       code: this.code,
+      eventName: this.eventName,
       title: this.quiz.title,
       label: this.label,
       state: this.state,
@@ -229,7 +322,8 @@ export class Room {
       question,
       myAnswer: a ? { choice: a.choice } : null,
       reveal: revealed && q ? { correctIndex: q.correctIndex, correct: !!a?.correct, points: a?.points ?? 0 } : null,
-      leaderboard: showLb ? (lb !== undefined ? lb : this.leaderboard()) : null,
+      leaderboard: showLb ? (lb !== undefined ? lb : this.leaderboard().slice(0, PLAYER_TOP)) : null,
+      eventBoard: showLb ? this.playerEventBoard(p, ev, evTop) : null,
     };
   }
 
@@ -246,20 +340,23 @@ export class Room {
     // A full state supersedes pending deltas.
     this.lobbyDirty = false;
     this.progressDirty = false;
+    // Event standings: ONE aggregate query per broadcast, shared by every socket below.
+    const ev = this.eventStandings(true);
     if (this.mods.size) {
-      const s = JSON.stringify({ t: 'state', ...this.hostSnapshot('mod') });
+      const s = JSON.stringify({ t: 'state', ...this.hostSnapshot('mod', ev) });
       for (const ws of this.mods) sendRaw(ws, s);
     }
     if (this.presents.size) {
-      const s = JSON.stringify({ t: 'state', ...this.hostSnapshot('present') });
+      const s = JSON.stringify({ t: 'state', ...this.hostSnapshot('present', ev) });
       for (const ws of this.presents) sendRaw(ws, s);
     }
     const count = this.activeCount();
-    const showLb = this.state === 'LEADERBOARD' || this.state === 'FINISHED';
-    const lb = showLb ? this.leaderboard() : null;
+    const showLb = this.showBoards();
+    const lb = showLb ? this.leaderboard().slice(0, PLAYER_TOP) : null;
+    const evTop = ev ? Room.boardTop(ev.list, PLAYER_TOP) : null;
     for (const p of this.players.values()) {
       if (p.kicked || p.sockets.size === 0) continue;
-      const s = JSON.stringify({ t: 'state', ...this.playerSnapshot(p, count, lb) });
+      const s = JSON.stringify({ t: 'state', ...this.playerSnapshot(p, count, lb, ev, evTop) });
       for (const ws of p.sockets) sendRaw(ws, s);
     }
   }
@@ -509,7 +606,8 @@ export class Room {
 
   summary(): SessionSummary {
     return {
-      id: this.id, code: this.code, quizId: this.quiz.id, moderatorId: this.moderatorId, title: this.quiz.title, label: this.label,
+      id: this.id, code: this.code, quizId: this.quiz.id, moderatorId: this.moderatorId, eventId: this.eventId, eventName: this.eventName,
+      title: this.quiz.title, label: this.label,
       state: this.state, qIndex: this.qIndex, total: this.total, players: this.activeCount(), listed: this.listed, joinOpen: this.joinOpen,
       joinUrl: this.joinUrl, createdAt: this.createdAt, endedAt: this.endedAt,
     };
@@ -517,8 +615,8 @@ export class Room {
 
   publicInfo(): PublicSession {
     return {
-      code: this.code, title: this.quiz.title, label: this.label, state: this.state, qIndex: this.qIndex, total: this.total,
-      players: this.activeCount(), joinOpen: this.joinOpen,
+      code: this.code, eventName: this.eventName, title: this.quiz.title, label: this.label, state: this.state, qIndex: this.qIndex,
+      total: this.total, players: this.activeCount(), joinOpen: this.joinOpen,
     };
   }
 

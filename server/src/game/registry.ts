@@ -1,6 +1,6 @@
 // Cloud 9 — in-memory registry of live rooms.
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
-import { DEFAULTS, type QuizDef, type SessionSummary, type PublicSession } from '../../../shared/model';
+import { DEFAULTS, type QuizDef, type SessionSummary, type PublicSession, type EventDef } from '../../../shared/model';
 import type { PlayInfo, JoinReq, SessionPatch } from '../../../shared/api';
 import type { GameRegistry, JoinResult, Repo, SessionRow, PlayerRow } from '../contracts';
 import type { Config } from '../config';
@@ -27,8 +27,8 @@ export class Registry implements GameRegistry {
     return this.rooms.get(code) ?? null;
   }
 
-  private newRoom(row: SessionRow): Room {
-    return new Room(this.repo, this.config.publicUrl, this.graceMs, row);
+  private newRoom(row: SessionRow, event: EventDef | null): Room {
+    return new Room(this.repo, this.config.publicUrl, this.graceMs, row, event);
   }
 
   private freshCode(): string {
@@ -39,12 +39,14 @@ export class Registry implements GameRegistry {
     throw new Error('could not allocate a room code');
   }
 
-  createSession(input: { quiz: QuizDef; moderatorId: string; label: string; listed: boolean }): SessionSummary {
+  createSession(input: { quiz: QuizDef; event: EventDef | null; moderatorId: string; label: string; listed: boolean }): SessionSummary {
+    const event = input.event ?? null;
     const row: SessionRow = {
       id: randomUUID(),
       code: this.freshCode(),
       quizId: input.quiz.id,
       moderatorId: input.moderatorId,
+      eventId: event ? event.id : null,
       label: (input.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 60),
       listed: !!input.listed,
       joinOpen: true,
@@ -57,9 +59,17 @@ export class Registry implements GameRegistry {
       endedAt: null,
     };
     this.repo.insertSession(row);
-    const room = this.newRoom(row);
+    const room = this.newRoom(row, event);
     this.rooms.set(room.code, room);
     return room.summary();
+  }
+
+  liveCountByEvent(): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const r of this.rooms.values()) {
+      if (r.eventId && r.state !== 'FINISHED') out.set(r.eventId, (out.get(r.eventId) ?? 0) + 1);
+    }
+    return out;
   }
 
   summary(code: string): SessionSummary | null {
@@ -81,17 +91,30 @@ export class Registry implements GameRegistry {
   playInfo(code: string): PlayInfo | null {
     const r = this.rooms.get(code);
     if (!r) return null;
-    return { code: r.code, title: r.quiz.title, label: r.label, state: r.state, emailMode: r.quiz.emailMode, joinOpen: r.joinOpen };
+    return { code: r.code, eventName: r.eventName, title: r.quiz.title, label: r.label, state: r.state, emailMode: r.emailMode, joinOpen: r.joinOpen };
   }
 
   join(code: string, req: JoinReq): JoinResult {
     const r = this.rooms.get(code);
     if (!r) return { ok: false, error: 'not_found' };
     if (r.state === 'FINISHED') return { ok: false, error: 'finished' };
-    if (!r.joinOpen) return { ok: false, error: 'join_closed' };
     const name = cleanName(req?.name);
+    const em = checkEmail(req?.email, r.emailMode);
+    // Same email already in this room → rebind to that player (fresh token, keeps name/score); kicked stays kicked.
+    // Checked before join_closed / room_full: the person is already a member of this room.
+    if (name && em.ok && em.email) {
+      const existing = r.findByEmail(em.email);
+      if (existing) {
+        if (existing.kicked) return { ok: false, error: 'kicked' };
+        const token = randomBytes(24).toString('base64url');
+        const tokenHash = sha256Hex(token);
+        this.repo.updatePlayer(existing.id, { tokenHash });
+        r.rebindToken(existing, tokenHash);
+        return { ok: true, playerId: existing.id, token, name: existing.name, rejoined: true };
+      }
+    }
+    if (!r.joinOpen) return { ok: false, error: 'join_closed' };
     if (!name) return { ok: false, error: 'invalid_name' };
-    const em = checkEmail(req?.email, r.quiz.emailMode);
     if (!em.ok) return { ok: false, error: em.error };
     if (r.activeCount() >= this.config.maxPlayersPerRoom) return { ok: false, error: 'room_full' };
 
@@ -110,7 +133,7 @@ export class Registry implements GameRegistry {
     this.repo.insertPlayer(row);
     r.addPlayer(row);
     r.onJoined();
-    return { ok: true, playerId: row.id, token, name: display };
+    return { ok: true, playerId: row.id, token, name: display, rejoined: false };
   }
 
   patch(code: string, patch: SessionPatch): SessionSummary | null {
@@ -129,7 +152,11 @@ export class Registry implements GameRegistry {
     for (const s of this.repo.loadUnfinishedSessions()) {
       try {
         if (this.rooms.has(s.code)) continue;
-        const room = this.newRoom(s);
+        let event: EventDef | null = null;
+        if (s.eventId) {
+          try { event = this.repo.getEvent(s.eventId); } catch (e) { console.error(`[game] getEvent failed for session ${s.id}`, e); }
+        }
+        const room = this.newRoom(s, event);
         for (const p of this.repo.listPlayers(s.id)) room.addPlayer(p);
         room.restoreAnswers(this.repo.listAnswers(s.id));
         this.rooms.set(room.code, room);

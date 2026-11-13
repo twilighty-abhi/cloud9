@@ -5,7 +5,7 @@ import type { StoredPlayer } from '../../lib/storage';
 import { navigate } from '../../lib/router';
 import { useRoom } from '../../lib/ws';
 import type { PlayerSnapshot } from '../../../../shared/protocol';
-import { fixtureName, playerFixture, joinFixture } from '../../dev/playerFixtures';
+import { fixtureName, playerFixture, joinFixture, joinEventFixture } from '../../dev/playerFixtures';
 import { JoinForm } from './Join';
 import { Message, Shell, LiveShell } from './parts';
 import { RoomView, Kicked } from './screens';
@@ -63,6 +63,7 @@ function Connected(props: { code: string; player: StoredPlayer; onUnauthorized: 
 function PlayFixture({ name, code }: { name: string; code: string }) {
   const [snap] = useState(() => playerFixture(name));
   if (name === 'join-form') return <JoinForm code={joinFixture.code} fixtureInfo={joinFixture} onJoined={() => {}} />;
+  if (name === 'join-email-required') return <JoinForm code={joinEventFixture.code} fixtureInfo={joinEventFixture} onJoined={() => {}} />;
   if (name === 'kicked') return <Kicked />;
   if (name === 'not-found') return <Message title="Quiz not found" body={`There's no live quiz with the code ${code}. Check the code on the screen and try again.`} home />;
   if (!snap) return <Shell><p class="c9-p-center">Unknown fixture "{name}"</p></Shell>;

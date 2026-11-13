@@ -132,6 +132,7 @@ function SessionCard({ s }: { s: PublicSession }) {
   return (
     <li class="yy-card c9-h-card">
       <div class="c9-h-card__text">
+        {s.eventName && <p class="c9-overline c9-h-card__event">{s.eventName}</p>}
         <h3 class="c9-h-card__title">{s.title}</h3>
         {s.label && <p class="c9-h-card__label">{s.label}</p>}
       </div>

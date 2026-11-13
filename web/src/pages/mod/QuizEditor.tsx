@@ -3,21 +3,21 @@ import type { Me, QuizInput } from '../../../../shared/api';
 import type { QuizDef, EmailMode, ScoringMode } from '../../../../shared/model';
 import { DEFAULTS } from '../../../../shared/model';
 import { navigate } from '../../lib/router';
-import { load, mutate, errMsg, ModHeader, LETTERS, fixture } from './common';
+import { load, mutate, errMsg, apiErrMsg, ModHeader, LETTERS, fixture, param, useEvents, EventSelect, EmailModeField } from './common';
 
 interface QDraft { key: number; text: string; imageUrl: string; options: string[]; correctIndex: number; timeLimitSec: string; pointsMax: number }
-interface Draft { title: string; emailMode: EmailMode; scoring: ScoringMode; questions: QDraft[] }
+interface Draft { eventId: string | null; title: string; emailMode: EmailMode; scoring: ScoringMode; questions: QDraft[] }
 
 let keySeq = 1;
 const blankQ = (): QDraft => ({ key: keySeq++, text: '', imageUrl: '', options: ['', '', '', ''], correctIndex: 0, timeLimitSec: String(DEFAULTS.timeLimitSec), pointsMax: DEFAULTS.pointsMax });
 const fromQuiz = (q: QuizDef): Draft => ({
-  title: q.title, emailMode: q.emailMode, scoring: q.scoring,
+  eventId: q.eventId ?? null, title: q.title, emailMode: q.emailMode, scoring: q.scoring,
   questions: q.questions.map((x) => ({ key: keySeq++, text: x.text, imageUrl: x.imageUrl ?? '', options: [...x.options], correctIndex: x.correctIndex, timeLimitSec: String(x.timeLimitSec), pointsMax: x.pointsMax })),
 });
 
 function toInput(d: Draft): QuizInput {
   return {
-    title: d.title.trim(), emailMode: d.emailMode, scoring: d.scoring,
+    eventId: d.eventId, title: d.title.trim(), emailMode: d.emailMode, scoring: d.scoring,
     questions: d.questions.map((q) => {
       // drop empty options but keep the correct one pointing at the same text
       const kept = q.options.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o !== '');
@@ -44,7 +44,7 @@ function validate(d: Draft): string[] {
 }
 
 export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => void }) {
-  const [draft, setDraft] = useState<Draft | null>(props.id ? null : { title: '', emailMode: 'optional', scoring: 'speed', questions: [blankQ()] });
+  const [draft, setDraft] = useState<Draft | null>(props.id ? null : { eventId: param('event'), title: '', emailMode: 'optional', scoring: 'speed', questions: [blankQ()] });
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -52,10 +52,15 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
   const [saved, setSaved] = useState(false);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
+  const { events, error: evErr } = useEvents();
+  // where "back" goes: the event page when we came from one (or the quiz belongs to one), else the dashboard
+  const [backTo, setBackTo] = useState<string | null>(props.id ? null : param('event'));
+  const backHref = backTo ? `/mod/event/${encodeURIComponent(backTo)}` : '/mod';
+  const evLocked = !!(draft?.eventId && events?.find((e) => e.id === draft.eventId)?.emailRequired);
 
   useEffect(() => {
     if (!props.id) return;
-    load<QuizDef>(`/api/quizzes/${props.id}`).then((q) => setDraft(fromQuiz(q))).catch((e) => setLoadErr(errMsg(e)));
+    load<QuizDef>(`/api/quizzes/${props.id}`).then((q) => { setDraft(fromQuiz(q)); setBackTo(q.eventId ?? null); }).catch((e) => setLoadErr(errMsg(e)));
   }, [props.id]);
 
   useEffect(() => {
@@ -71,7 +76,7 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
     e.preventDefault();
     if (dirty && !confirm('You have unsaved changes. Leave without saving?')) return;
     setDirty(false); dirtyRef.current = false;
-    navigate('/mod');
+    navigate(backHref);
   };
 
   const save = async () => {
@@ -86,7 +91,7 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
       setDirty(false); dirtyRef.current = false; setSaved(true);
       if (!props.id && q?.id && !fixture) navigate(`/mod/quiz/${q.id}`, true);
       else if (q?.questions) setDraft(fromQuiz(q));
-    } catch (e) { setErrors([errMsg(e)]); }
+    } catch (e) { setErrors([apiErrMsg(e)]); }
     finally { setBusy(false); }
   };
 
@@ -104,7 +109,7 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
     <div class="c9-page">
       <ModHeader me={props.me} onLogout={props.onLogout} />
       <main class="c9-m-main c9-m-form">
-        <a href="/mod" class="yy-btn yy-btn--quiet yy-btn--sm c9-m-back" onClick={back as any}>← Dashboard</a>
+        <a href={backHref} class="yy-btn yy-btn--quiet yy-btn--sm c9-m-back" onClick={back as any}>← {backTo ? 'Event' : 'Dashboard'}</a>
         <div class="c9-m-pagehead">
           <h1 class="c9-m-h1">{props.id ? 'Edit quiz' : 'New quiz'}</h1>
           <p class="c9-muted">Changes apply to sessions you start after saving.</p>
@@ -116,17 +121,9 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
             <input id="qt" class="yy-input" maxLength={120} placeholder="e.g. Cloud Basics Warm-up" value={draft.title}
               onInput={(e) => update((d) => ({ ...d, title: (e.target as HTMLInputElement).value }))} />
           </div>
+          <EventSelect value={draft.eventId} events={events} error={evErr} onChange={(id) => update((d) => ({ ...d, eventId: id }))} />
           <div class="c9-m-settings__row">
-            <div class="yy-field">
-              <span class="yy-label" id="em-l">Ask players for email</span>
-              <div class="yy-seg" role="tablist" aria-labelledby="em-l">
-                {(['off', 'optional', 'required'] as EmailMode[]).map((m) => (
-                  <button type="button" role="tab" aria-selected={draft.emailMode === m} onClick={() => update((d) => ({ ...d, emailMode: m }))}>
-                    {m === 'off' ? 'Off' : m === 'optional' ? 'Optional' : 'Required'}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <EmailModeField labelId="em-l" value={draft.emailMode} locked={evLocked} onChange={(m) => update((d) => ({ ...d, emailMode: m }))} />
             <div class="yy-field">
               <span class="yy-label" id="sc-l">Scoring</span>
               <div class="yy-seg" role="tablist" aria-labelledby="sc-l">
@@ -214,7 +211,7 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
         <div class="c9-m-savebar__in">
           <span class="c9-m-small c9-muted">{busy ? 'Saving…' : dirty ? 'Unsaved changes' : saved ? 'All changes saved' : `${draft.questions.length} question${draft.questions.length === 1 ? '' : 's'}`}</span>
           <span class="c9-spacer" />
-          <a href="/mod" class="yy-btn yy-btn--quiet" onClick={back as any}>Cancel</a>
+          <a href={backHref} class="yy-btn yy-btn--quiet" onClick={back as any}>Cancel</a>
           <button class="yy-btn yy-btn--primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save quiz'}</button>
         </div>
       </div>

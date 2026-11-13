@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Me, CreateSessionReq } from '../../../../shared/api';
-import type { QuizListItem, SessionSummary } from '../../../../shared/model';
+import type { Me, CreateSessionReq, EventInput } from '../../../../shared/api';
+import type { QuizListItem, SessionSummary, EventListItem, EventDef } from '../../../../shared/model';
 import { navigate } from '../../lib/router';
-import { load, mutate, errMsg, ModHeader, Chip, Link, stateChip, relTime, fmtNum, fixture } from './common';
+import { load, mutate, errMsg, apiErrMsg, ModHeader, Chip, Link, stateChip, relTime, fmtNum, fixture } from './common';
 
 export function Dashboard(props: { me: Me; onLogout: () => void }) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
@@ -10,16 +10,26 @@ export function Dashboard(props: { me: Me; onLogout: () => void }) {
   const [quizzes, setQuizzes] = useState<QuizListItem[] | null>(null);
   const [quizErr, setQuizErr] = useState<string | null>(null);
   const [startFor, setStartFor] = useState<string | null>(null);
+  const [events, setEvents] = useState<EventListItem[] | null>(null);
+  const [evErr, setEvErr] = useState<string | null>(null);
+  const [newEvent, setNewEvent] = useState(false);
 
   const loadSessions = () =>
     load<SessionSummary[]>('/api/sessions').then((s) => { setSessions(s); setSessErr(null); }).catch((e) => setSessErr(errMsg(e)));
+  const loadEvents = () =>
+    load<EventListItem[]>('/api/events').then((e) => { setEvents(e); setEvErr(null); }).catch((e) => setEvErr(errMsg(e)));
   const loadQuizzes = () =>
-    load<QuizListItem[]>('/api/quizzes').then((q) => { setQuizzes(q); setQuizErr(null); }).catch((e) => setQuizErr(errMsg(e)));
+    load<QuizListItem[]>('/api/quizzes?eventId=none').then((q) => { setQuizzes(q); setQuizErr(null); }).catch((e) => setQuizErr(errMsg(e)));
 
   useEffect(() => {
-    loadSessions(); loadQuizzes();
+    loadSessions(); loadQuizzes(); loadEvents();
     if (fixture) return;
-    const id = setInterval(() => { if (document.visibilityState === 'visible') loadSessions(); }, 5000);
+    let n = 0;
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      loadSessions();
+      if (++n % 3 === 0) loadEvents();   // event live counts every 15 s
+    }, 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -40,6 +50,27 @@ export function Dashboard(props: { me: Me; onLogout: () => void }) {
           <h1 class="c9-m-h1">Your rooms</h1>
           <p class="c9-muted">Start a session from a quiz, then open its control panel to run the game.</p>
         </div>
+
+        <section class="c9-m-section" aria-labelledby="ev-h">
+          <div class="c9-m-section__head">
+            <h2 id="ev-h" class="c9-m-h4">Events</h2>
+            <span class="c9-muted c9-m-small c9-m-hide-sm c9-m-section__hint">Shared with every moderator</span>
+            <div class="c9-m-section__btns">
+              <button class="yy-btn yy-btn--secondary yy-btn--sm" aria-expanded={newEvent} onClick={() => setNewEvent(!newEvent)}>+ New event</button>
+            </div>
+          </div>
+          {newEvent && <NewEventForm onCancel={() => setNewEvent(false)} />}
+          {evErr && <div class="yy-callout" role="alert">Couldn't load events: {evErr}</div>}
+          {!events && !evErr && <div class="c9-m-skel" />}
+          {events && events.length === 0 && !newEvent && (
+            <div class="yy-empty">No events yet. An event groups quizzes from several halls and keeps one overall leaderboard — create one with <strong>New event</strong>.</div>
+          )}
+          {events && events.length > 0 && (
+            <ul class="c9-m-evgrid">
+              {events.map((ev) => <EventCard key={ev.id} ev={ev} mine={ev.moderatorId === props.me.id} />)}
+            </ul>
+          )}
+        </section>
 
         <section class="c9-m-section" aria-labelledby="live-h">
           <div class="c9-m-section__head">
@@ -65,6 +96,7 @@ export function Dashboard(props: { me: Me; onLogout: () => void }) {
                     <div class="c9-m-row__main">
                       <div class="c9-m-row__title">{s.title}</div>
                       <div class="c9-m-row__meta">
+                        {s.eventName && <span class="c9-m-evtag">{s.eventName}</span>}
                         {s.label && <span>{s.label}</span>}
                         <span class="c9-mono">{s.code}</span>
                         <span>{fmtNum(s.players)} players</span>
@@ -84,7 +116,8 @@ export function Dashboard(props: { me: Me; onLogout: () => void }) {
 
         <section class="c9-m-section" aria-labelledby="quiz-h">
           <div class="c9-m-section__head">
-            <h2 id="quiz-h" class="c9-m-h4">Your quizzes</h2>
+            <h2 id="quiz-h" class="c9-m-h4">Standalone quizzes</h2>
+            <span class="c9-muted c9-m-small c9-m-hide-sm c9-m-section__hint">Not part of any event</span>
             <div class="c9-m-section__btns">
               <Link class="yy-btn yy-btn--secondary yy-btn--sm" href="/mod/import">Import CSV</Link>
               <Link class="yy-btn yy-btn--secondary yy-btn--sm" href="/mod/quiz/new">+ New quiz</Link>
@@ -93,7 +126,7 @@ export function Dashboard(props: { me: Me; onLogout: () => void }) {
           {quizErr && <div class="yy-callout" role="alert">Couldn't load quizzes: {quizErr}</div>}
           {!quizzes && !quizErr && <div class="c9-m-skel" />}
           {quizzes && quizzes.length === 0 && (
-            <div class="yy-empty">No quizzes yet. Create one with <strong>New quiz</strong> or bring a spreadsheet in with <strong>Import CSV</strong>.</div>
+            <div class="yy-empty">No standalone quizzes. Quizzes inside an event are listed on the event's page. Create one with <strong>New quiz</strong> or bring a spreadsheet in with <strong>Import CSV</strong>.</div>
           )}
           {quizzes && quizzes.length > 0 && (
             <ul class="c9-m-list">
@@ -123,7 +156,68 @@ export function Dashboard(props: { me: Me; onLogout: () => void }) {
   );
 }
 
-function SessionRow({ s }: { s: SessionSummary }) {
+function EventCard({ ev, mine }: { ev: EventListItem; mine: boolean }) {
+  return (
+    <li>
+      <Link href={`/mod/event/${ev.id}`} class="c9-m-evcard">
+        <span class="c9-m-evcard__top">
+          <span class="c9-m-evcard__name">{ev.name}</span>
+          <span class="c9-m-evcard__arrow" aria-hidden="true">→</span>
+        </span>
+        <span class="c9-m-evcard__meta">
+          <span><strong>{ev.quizCount}</strong> quiz{ev.quizCount === 1 ? '' : 'zes'}</span>
+          <span><strong>{ev.sessionCount}</strong> session{ev.sessionCount === 1 ? '' : 's'}</span>
+          {mine && <span>Created by you</span>}
+        </span>
+        <span class="c9-m-row__chips">
+          {ev.liveSessions > 0
+            ? <Chip tone="success"><span class="c9-m-dot is-on" /> {ev.liveSessions} live</Chip>
+            : <Chip tone="neutral">No live rooms</Chip>}
+          {ev.emailRequired && <Chip tone="accent" title="Players must enter an email in every quiz of this event">Email required</Chip>}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function NewEventForm({ onCancel }: { onCancel: () => void }) {
+  const [name, setName] = useState('');
+  const [emailRequired, setEmailRequired] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const submit = async (e: Event) => {
+    e.preventDefault();
+    const n = name.trim();
+    if (!n) { setErr('Give the event a name.'); return; }
+    setBusy(true); setErr(null);
+    try {
+      const body: EventInput = { name: n, emailRequired };
+      const ev = await mutate<EventDef>('POST', '/api/events', body);
+      navigate(`/mod/event/${ev.id ?? 'ev1'}`);
+    } catch (e2) { setErr(apiErrMsg(e2)); setBusy(false); }
+  };
+  return (
+    <form class="c9-m-startform c9-m-evform" onSubmit={submit}>
+      <div class="yy-field c9-m-startform__label">
+        <label class="yy-label" for="new-ev">Event name</label>
+        <input id="new-ev" class="yy-input" placeholder="e.g. CCD Kochi '26" maxLength={80} value={name}
+          onInput={(e) => setName((e.target as HTMLInputElement).value)} autoFocus />
+      </div>
+      <label class="c9-m-check" title="Needed to find the overall winner across halls">
+        <input type="checkbox" checked={emailRequired} onChange={(e) => setEmailRequired((e.target as HTMLInputElement).checked)} />
+        <span>Require email</span>
+      </label>
+      <div class="c9-m-startform__actions">
+        <button type="button" class="yy-btn yy-btn--quiet" onClick={onCancel}>Cancel</button>
+        <button type="submit" class="yy-btn yy-btn--primary" disabled={busy}>{busy ? 'Creating…' : 'Create event'}</button>
+      </div>
+      <p class="yy-help">With email required, a player's scores add up across every quiz in the event — that's how you find the overall winner.</p>
+      {err && <p class="yy-help yy-help--error" role="alert">{err}</p>}
+    </form>
+  );
+}
+
+export function SessionRow({ s, canOpen = true, showEvent = true }: { s: SessionSummary; canOpen?: boolean; showEvent?: boolean }) {
   const chip = stateChip(s.state, s.qIndex, s.total);
   return (
     <li class="c9-m-row c9-m-row--live">
@@ -136,6 +230,7 @@ function SessionRow({ s }: { s: SessionSummary }) {
         </div>
       </div>
       <div class="c9-m-row__chips">
+        {showEvent && s.eventName && <Chip tone="warning" title="Part of this event">{s.eventName}</Chip>}
         <Chip tone={chip.tone}>{chip.text}</Chip>
         <Chip tone={s.listed ? 'accent' : 'neutral'} title={s.listed ? 'Shown on the public home page' : 'Join by code or QR only'}>
           {s.listed ? 'Listed' : 'Hidden'}
@@ -143,13 +238,15 @@ function SessionRow({ s }: { s: SessionSummary }) {
         {!s.joinOpen && <Chip tone="neutral">Joining closed</Chip>}
       </div>
       <div class="c9-m-row__actions">
-        <Link class="yy-btn yy-btn--primary yy-btn--sm" href={`/mod/room/${s.code}`}>Open</Link>
+        {canOpen
+          ? <Link class="yy-btn yy-btn--primary yy-btn--sm" href={`/mod/room/${s.code}`}>Open</Link>
+          : <span class="c9-muted c9-m-small">Another moderator's room</span>}
       </div>
     </li>
   );
 }
 
-function StartForm({ quiz, onCancel }: { quiz: QuizListItem; onCancel: () => void }) {
+export function StartForm({ quiz, onCancel }: { quiz: QuizListItem; onCancel: () => void }) {
   const [label, setLabel] = useState('');
   const [listed, setListed] = useState(true);
   const [busy, setBusy] = useState(false);

@@ -4,6 +4,8 @@
 //   npx tsx loadtest/bots.ts --url http://localhost:3000 --rooms 5 --players 50 --questions 10 --churn 0.2 --time 8
 //
 // Scenarios (PLAN §18): A = 1 room × 250, B = 5 rooms × 50, C = B + 20% churn. Explicit flags override the preset.
+// --event (default ON for C, --no-event to disable): one event holds every room's quiz; bots join with unique emails
+// (bot-<n>@load.test) and ~10% reuse an email from the previous room, so the event leaderboard has to aggregate them.
 // Joins send a distinct X-Forwarded-For per bot (join is rate-limited per IP; server trusts proxy headers),
 // so point --url straight at the app (127.0.0.1:3000 or an SSH tunnel), not through Caddy, which rewrites XFF.
 // Exit code 0 = PASS, 1 = FAIL. JSON report: loadtest/last-report.json
@@ -14,8 +16,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import type { ServerMsg, ClientMsg, HostSnapshot, PlayerSnapshot, ModAction } from '../shared/protocol';
-import type { JoinRes, QuizInput, QuestionInput } from '../shared/api';
-import type { QuizDef, SessionSummary, RoomState } from '../shared/model';
+import type { JoinRes, QuizInput, QuestionInput, PublicEventBoard } from '../shared/api';
+import type { QuizDef, SessionSummary, RoomState, EventDef, EventLeaderEntry } from '../shared/model';
 
 // ───────────────────────────── options ─────────────────────────────
 
@@ -32,6 +34,7 @@ const HELP = `Cloud 9 load test
   --stagger <sec>      max random room start offset (default 3)
   --pause <ms>         moderator pause between reveal/leaderboard/next (default 400)
   --deadline <sec>     hard stop (default: computed)
+  --event / --no-event put all rooms in one event, bots join with emails (default: on for C)
   --no-xff             don't send X-Forwarded-For on joins
   --quiet              less progress output`;
 
@@ -86,6 +89,7 @@ const opts = {
   answerMinMs: 300,
   answerMaxMs: 3000,
   xff: !args['no-xff'],
+  event: args['no-event'] ? false : args.event ? true : scenario === 'C',
   quiet: !!args.quiet,
   deadlineMs: 0,
 };
@@ -93,7 +97,7 @@ opts.deadlineMs = num('deadline', 90 + opts.staggerMs / 1000 + opts.rampMs / 100
 const WS_BASE = opts.url.replace(/^http/, 'ws');
 
 // Pass criteria (PLAN §18)
-const CRITERIA = { ackP95Ms: 150, fanoutP95Ms: 100, rssMb: 250 };
+const CRITERIA = { ackP95Ms: 150, fanoutP95Ms: 100, rssMb: 250, eventBoardP95Ms: 100 };
 
 // ───────────────────────────── metrics ─────────────────────────────
 
@@ -129,6 +133,17 @@ const M = {
   roomsFinished: 0,
   roomErrors: [] as string[],
   deadlineHit: false,
+  // event mode
+  eventId: '' as string,
+  emailLeaks: 0,
+  eventBoardMissing: 0,
+  eventBoardSeen: 0,
+  playerTopOver3: 0,
+  rejoinedUnexpected: 0,
+  eventGetLatMs: [] as number[],
+  publicBoardLatMs: [] as number[],
+  publicBoardFails: 0,
+  eventCheck: null as null | { ok: boolean; total: number; distinctEmails: number; boardSum: number; finalSum: number; reusedEmails: number; detail: string },
 };
 
 function bump(map: Record<string, number>, key: string) { map[key] = (map[key] ?? 0) + 1; }
@@ -298,7 +313,10 @@ class Room {
       timeLimitSec: opts.time,
       pointsMax: 1000,
     }));
-    const quiz: QuizInput = { title: `Load test ${new Date().toISOString().slice(11, 19)} r${this.idx + 1}`, emailMode: 'off', scoring: 'speed', questions };
+    const quiz: QuizInput = {
+      title: `Load test ${new Date().toISOString().slice(11, 19)} r${this.idx + 1}`, emailMode: 'off', scoring: 'speed', questions,
+      ...(M.eventId ? { eventId: M.eventId } : {}),
+    };
     const q = await http('POST', '/api/quizzes', quiz, { Cookie: this.cookie });
     if (q.status !== 201 && q.status !== 200) throw new Error(`create quiz: HTTP ${q.status} ${JSON.stringify(q.data)}`);
     const quizId = (q.data as QuizDef).id;
@@ -398,22 +416,33 @@ class Bot {
   reconnects = 0;
   private intentional = new WeakSet<WebSocket>();
 
+  email: string | null = null;
+
   constructor(private room: Room, i: number) {
     this.name = `bot${room.idx + 1}-${i + 1}`;
     this.ip = nextIp();
+    if (opts.event) {
+      // unique per bot; the first `reusePerRoom` bots of every room after the first reuse the email of one of the LAST
+      // bots of the previous room (those are never reusers themselves, so every reuse really spans two rooms)
+      const reuse = room.idx > 0 && i < reusePerRoom;
+      const g = reuse ? (room.idx - 1) * opts.players + (opts.players - 1 - i) : room.idx * opts.players + i;
+      this.email = `bot-${g}@load.test`;
+    }
   }
 
   async start() {
     if (shuttingDown) return;
     const t = now();
     try {
-      const r = await http('POST', `/api/play/${this.room.code}/join`, { name: this.name }, opts.xff ? { 'X-Forwarded-For': this.ip } : {});
+      const body = this.email ? { name: this.name, email: this.email } : { name: this.name };
+      const r = await http('POST', `/api/play/${this.room.code}/join`, body, opts.xff ? { 'X-Forwarded-For': this.ip } : {});
       if (r.status !== 200) {
         M.joinsFailed++; bump(M.joinFailReasons, `${r.status} ${r.data?.error ?? ''}`.trim());
         return;
       }
       const jr = r.data as JoinRes;
       this.token = jr.token; this.playerId = jr.playerId;
+      if (jr.rejoined) M.rejoinedUnexpected++; // every bot's email is unique within its room
       M.joinsOk++; M.joinLatMs.push(now() - t);
     } catch (e) {
       M.joinsFailed++; bump(M.joinFailReasons, `network ${(e as Error).name}`);
@@ -438,7 +467,9 @@ class Bot {
       ws.on('open', () => { this.connected = true; this.connectedAt = now(); });
       ws.on('message', (data) => {
         let msg: ServerMsg;
-        try { msg = JSON.parse(data.toString()) as ServerMsg; } catch { M.wsErrors++; return; }
+        const raw = data.toString();
+        if (opts.event && raw.includes('@')) M.emailLeaks++; // players must never receive emails
+        try { msg = JSON.parse(raw) as ServerMsg; } catch { M.wsErrors++; return; }
         this.onMsg(msg);
         if (msg.t === 'state') settle(true);
       });
@@ -486,6 +517,13 @@ class Bot {
           }
         }
         if (msg.state === 'QUESTION' && msg.question) this.onQuestion(msg);
+        if (msg.state === 'LEADERBOARD' || msg.state === 'FINISHED') {
+          if ((msg.leaderboard?.length ?? 0) > 3) M.playerTopOver3++;
+          if (opts.event) {
+            if (!msg.eventBoard || !msg.eventBoard.me) M.eventBoardMissing++;
+            else { M.eventBoardSeen++; if (msg.eventBoard.top.length > 3) M.playerTopOver3++; }
+          }
+        }
         break;
       }
       case 'ack': {
@@ -561,6 +599,61 @@ class Bot {
   }
 }
 
+// ───────────────────────────── event mode ─────────────────────────────
+
+const reusePerRoom = opts.rooms > 1 ? Math.min(Math.floor(opts.players / 2), Math.round((opts.players * 0.1 * opts.rooms) / (opts.rooms - 1))) : 0;
+
+async function createEvent(cookie: string): Promise<string> {
+  const r = await http('POST', '/api/events', { name: `Load test event ${new Date().toISOString().slice(11, 19)}`, emailRequired: true }, { Cookie: cookie });
+  if (r.status !== 201) throw new Error(`create event: HTTP ${r.status} ${JSON.stringify(r.data)}`);
+  return (r.data as EventDef).id;
+}
+
+/** Projector-style poller for the public event board while the games run. */
+function startPublicBoardPoller(): () => void {
+  let stop = false;
+  void (async () => {
+    while (!stop && !shuttingDown) {
+      const t = now();
+      try {
+        const r = await http('GET', `/api/public/events/${M.eventId}/leaderboard`, undefined, {}, 5000);
+        if (r.status !== 200 || JSON.stringify(r.data).includes('@')) M.publicBoardFails++;
+        else M.publicBoardLatMs.push(now() - t);
+      } catch { M.publicBoardFails++; }
+      await sleep(1000);
+    }
+  })();
+  return () => { stop = true; };
+}
+
+async function checkEventBoard(cookie: string, rooms: Room[]) {
+  // latency of the moderator leaderboard (full list, one SQL aggregate)
+  let board: EventLeaderEntry[] = [];
+  for (let i = 0; i < 20; i++) {
+    const t = now();
+    const r = await http('GET', `/api/events/${M.eventId}/leaderboard`, undefined, { Cookie: cookie });
+    if (r.status !== 200) throw new Error(`event leaderboard: HTTP ${r.status}`);
+    M.eventGetLatMs.push(now() - t);
+    board = r.data as EventLeaderEntry[];
+  }
+  const joined = rooms.flatMap((r) => r.bots.filter((b) => b.playerId && b.email));
+  const distinct = new Set(joined.map((b) => b.email!));
+  const finalSum = rooms.reduce((acc, r) => acc + (r.snap?.players.reduce((a, p) => a + p.score, 0) ?? 0), 0);
+  const boardSum = board.reduce((a, e) => a + e.score, 0);
+  const pub = await http('GET', `/api/public/events/${M.eventId}/leaderboard`);
+  const pubOk = pub.status === 200 && !JSON.stringify(pub.data).includes('@') && (pub.data as PublicEventBoard).top.length <= 10;
+  const multi = board.filter((e) => e.quizzesPlayed > 1).length;
+  M.eventCheck = {
+    ok: board.length === distinct.size && boardSum === finalSum && pubOk,
+    total: board.length,
+    distinctEmails: distinct.size,
+    boardSum,
+    finalSum,
+    reusedEmails: joined.length - distinct.size,
+    detail: `${multi} entries played >1 quiz; public board ${pubOk ? 'ok' : 'BAD'}`,
+  };
+}
+
 // ───────────────────────────── health sampling ─────────────────────────────
 
 async function sampleHealth(): Promise<{ rssMb: number; sockets: number; rooms: number } | null> {
@@ -599,6 +692,8 @@ function finish(reason: string): never | void {
   const ack = { p50: pct(M.ackLatMs, 50), p95: pct(M.ackLatMs, 95), p99: pct(M.ackLatMs, 99), max: pct(M.ackLatMs, 100) };
   const fan = { p50: pct(M.fanoutMs, 50), p95: pct(M.fanoutMs, 95), max: pct(M.fanoutMs, 100) };
 
+  const evLat = { p50: pct(M.eventGetLatMs, 50), p95: pct(M.eventGetLatMs, 95) };
+  const pubLat = { p50: pct(M.publicBoardLatMs, 50), p95: pct(M.publicBoardLatMs, 95) };
   const checks: { name: string; value: string; target: string; ok: boolean }[] = [
     { name: 'joins ok', value: `${M.joinsOk}/${expectedJoins}`, target: 'all', ok: M.joinsOk === expectedJoins && M.joinsFailed === 0 },
     { name: 'ws errors', value: String(M.wsErrors), target: '0', ok: M.wsErrors === 0 },
@@ -615,7 +710,20 @@ function finish(reason: string): never | void {
     { name: 'final score mismatch', value: String(M.finalScoreMismatch), target: '0', ok: M.finalScoreMismatch === 0 },
     { name: 'rooms finished', value: `${M.roomsFinished}/${opts.rooms}`, target: 'all', ok: M.roomsFinished === opts.rooms },
     { name: 'deadline', value: M.deadlineHit ? 'HIT' : 'ok', target: 'not hit', ok: !M.deadlineHit },
+    { name: 'player top-3 only', value: String(M.playerTopOver3), target: '0', ok: M.playerTopOver3 === 0 },
   ];
+  if (opts.event) {
+    const ec = M.eventCheck;
+    checks.push(
+      { name: 'event board entries', value: ec ? `${ec.total} / ${ec.distinctEmails} emails` : 'n/a', target: '= distinct emails', ok: !!ec && ec.total === ec.distinctEmails },
+      { name: 'event board score sum', value: ec ? `${ec.boardSum} / ${ec.finalSum}` : 'n/a', target: '= Σ final scores', ok: !!ec && ec.boardSum === ec.finalSum },
+      { name: 'event board (moderator) p95', value: fmt(evLat.p95), target: `< ${CRITERIA.eventBoardP95Ms} ms`, ok: evLat.p95 !== null && evLat.p95 < CRITERIA.eventBoardP95Ms },
+      { name: 'public event board', value: `${M.publicBoardLatMs.length} ok, ${M.publicBoardFails} bad`, target: '0 bad', ok: M.publicBoardFails === 0 && !!ec?.ok },
+      { name: 'player eventBoard present', value: `${M.eventBoardSeen} seen, ${M.eventBoardMissing} missing`, target: '0 missing', ok: M.eventBoardMissing === 0 && M.eventBoardSeen > 0 },
+      { name: 'emails in player msgs', value: String(M.emailLeaks), target: '0', ok: M.emailLeaks === 0 },
+      { name: 'unexpected rejoins', value: String(M.rejoinedUnexpected), target: '0', ok: M.rejoinedUnexpected === 0 },
+    );
+  }
   const pass = checks.every((c) => c.ok);
 
   const info: [string, string][] = [
@@ -629,6 +737,13 @@ function finish(reason: string): never | void {
     ['peak sockets / rooms', `${M.peakSockets} / ${M.peakRooms}`],
     ['churn disconnects / reconnects', `${M.churnDisconnects} / ${M.churnReconnects}`],
   ];
+  if (opts.event) {
+    info.push(
+      ['event', `${M.eventId} (${M.eventCheck ? `${M.eventCheck.reusedEmails} reused emails; ${M.eventCheck.detail}` : 'not checked'})`],
+      ['event board GET p50/p95', `${fmt(evLat.p50)} / ${fmt(evLat.p95)}  (n=${M.eventGetLatMs.length})`],
+      ['public board GET p50/p95', `${fmt(pubLat.p50)} / ${fmt(pubLat.p95)}  (n=${M.publicBoardLatMs.length})`],
+    );
+  }
 
   const w = Math.max(...checks.map((c) => c.name.length), ...info.map((i) => i[0].length)) + 2;
   console.log('\n════════════════════ Cloud 9 load test ════════════════════');
@@ -650,8 +765,8 @@ function finish(reason: string): never | void {
     options: { ...opts, scenario },
     criteria: CRITERIA,
     checks,
-    latency: { ackMs: ack, fanoutMs: fan, joinMs: { p50: pct(M.joinLatMs, 50), p95: pct(M.joinLatMs, 95) } },
-    metrics: { ...M, joinLatMs: undefined, ackLatMs: undefined, fanoutMs: undefined, unacked },
+    latency: { ackMs: ack, fanoutMs: fan, joinMs: { p50: pct(M.joinLatMs, 50), p95: pct(M.joinLatMs, 95) }, eventBoardMs: evLat, publicEventBoardMs: pubLat },
+    metrics: { ...M, joinLatMs: undefined, ackLatMs: undefined, fanoutMs: undefined, eventGetLatMs: undefined, publicBoardLatMs: undefined, unacked },
   };
   try {
     writeFileSync(join(dirname(fileURLToPath(import.meta.url)), 'last-report.json'), JSON.stringify(report, null, 2));
@@ -664,7 +779,7 @@ function finish(reason: string): never | void {
 // ───────────────────────────── main ─────────────────────────────
 
 async function main() {
-  console.log(`Cloud 9 load test → ${opts.url}: ${opts.rooms} room(s) × ${opts.players} players, ${opts.questions} questions × ${opts.time}s, churn ${opts.churn}, deadline ${Math.round(opts.deadlineMs / 1000)}s`);
+  console.log(`Cloud 9 load test → ${opts.url}: ${opts.rooms} room(s) × ${opts.players} players, ${opts.questions} questions × ${opts.time}s, churn ${opts.churn}, event ${opts.event ? 'on' : 'off'}, deadline ${Math.round(opts.deadlineMs / 1000)}s`);
   const deadline = setTimeout(() => { M.deadlineHit = true; console.error('!! global deadline reached'); finish('deadline'); }, opts.deadlineMs);
   deadline.unref();
 
@@ -676,8 +791,18 @@ async function main() {
   }, 2000);
 
   const cookie = await login();
+  let stopPoller = () => {};
+  if (opts.event) {
+    M.eventId = await createEvent(cookie);
+    log(`event ${M.eventId} created; ${reusePerRoom} bots per room (after the first) reuse an email`);
+    stopPoller = startPublicBoardPoller();
+  }
   const rooms = Array.from({ length: opts.rooms }, (_, i) => new Room(i, cookie));
   await Promise.all(rooms.map((r) => r.run().catch((e: Error) => { M.roomErrors.push(`${r.tag()}: ${e.message}`); log(`${r.tag()} ERROR: ${e.message}`); })));
+  stopPoller();
+  if (opts.event) {
+    try { await checkEventBoard(cookie, rooms); } catch (e) { M.roomErrors.push(`event check: ${(e as Error).message}`); }
+  }
   await sampleHealth();
   clearInterval(sampler);
   finish('completed');

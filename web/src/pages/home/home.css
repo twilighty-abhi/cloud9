@@ -28,6 +28,7 @@
 .c9-h-card { display: flex; flex-direction: column; gap: var(--space-3); padding: 18px; }
 .c9-h-card__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .c9-h-card__title { font-size: 20px; line-height: 1.2; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.c9-h-card__event { color: var(--yy-accent-text); font-size: 12px; margin-bottom: 2px; overflow-wrap: anywhere; }
 .c9-h-card__label { color: var(--yy-text-muted); font-size: 15px; }
 .c9-h-card__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .c9-h-card__players { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--yy-text-secondary); font-weight: 500; }

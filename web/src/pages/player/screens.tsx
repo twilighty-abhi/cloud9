@@ -1,7 +1,7 @@
 // Participant room screens, rendered from the server PlayerSnapshot. One action per screen.
+import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import type { PlayerSnapshot, ClientMsg } from '../../../../shared/protocol';
-import type { LeaderEntry } from '../../../../shared/model';
 import { useTick } from '../../lib/ws';
 import type { ConnStatus } from '../../lib/ws';
 import { linkClick } from '../../lib/router';
@@ -203,53 +203,66 @@ function Reveal({ snap }: { snap: PlayerSnapshot }) {
   );
 }
 
-function BoardList({ entries, meId, me, all }: { entries: LeaderEntry[]; meId: string; me: PlayerSnapshot['me']; all?: LeaderEntry[] }) {
-  const inTop = (all ?? entries).some((e) => e.playerId === meId);
+type TopRow = { key: string; name: string; score: number; rank: number; me: boolean };
+
+/** Compact top-3 board: medal rows + a "You're #N" footer when I'm not in the top 3. */
+function TopBoard({ title, rows, footer, emptyText }: { title: string; rows: TopRow[]; footer: ComponentChildren | null; emptyText: string }) {
   return (
-    <ol class="c9-p-board">
-      {entries.map((e) => (
-        <li key={e.playerId} class={`c9-p-board__row ${e.playerId === meId ? 'is-me' : ''}`}>
-          <span class="c9-p-board__rank">{e.rank}</span>
-          <span class="c9-p-board__name">{e.name}{e.playerId === meId && <span class="c9-p-you">You</span>}</span>
-          <span class="c9-p-board__score">{fmtNum(e.score)}</span>
-        </li>
-      ))}
-      {!inTop && me.rank !== null && (
-        <>
-          <li class="c9-p-board__gap" aria-hidden="true">···</li>
-          <li class="c9-p-board__row is-me">
-            <span class="c9-p-board__rank">{me.rank}</span>
-            <span class="c9-p-board__name">{me.name}<span class="c9-p-you">You</span></span>
-            <span class="c9-p-board__score">{fmtNum(me.score)}</span>
-          </li>
-        </>
-      )}
-    </ol>
+    <section class="c9-p-top" aria-label={title}>
+      <h2 class="c9-p-top__title">{title}</h2>
+      {rows.length > 0 ? (
+        <ol class="c9-p-top__list">
+          {rows.map((r) => (
+            <li key={r.key} class={`c9-p-top__row ${r.me ? 'is-me' : ''}`}>
+              <span class={`c9-p-medal c9-p-medal--${r.rank}`} aria-label={`Rank ${r.rank}`}>{r.rank}</span>
+              <span class="c9-p-top__name">{r.name}{r.me && <span class="c9-p-you">You</span>}</span>
+              <span class="c9-p-top__score">{fmtNum(r.score)}</span>
+            </li>
+          ))}
+        </ol>
+      ) : <p class="c9-p-top__empty">{emptyText}</p>}
+      {footer && <p class="c9-p-top__me">{footer}</p>}
+    </section>
   );
+}
+
+function QuizTop({ snap }: { snap: PlayerSnapshot }) {
+  const top = (snap.leaderboard ?? []).slice(0, 3);
+  const rows: TopRow[] = top.map((e) => ({ key: e.playerId, name: e.name, score: e.score, rank: e.rank, me: e.playerId === snap.me.id }));
+  const inTop = rows.some((r) => r.me);
+  const rank = snap.me.rank;
+  const footer = !inTop && rank !== null
+    ? <>You're <strong>#{rank}</strong> <span class="c9-nw">· {fmtNum(snap.me.score)} pts</span></>
+    : null;
+  return <TopBoard title="This quiz" rows={rows} footer={footer} emptyText="No scores yet." />;
+}
+
+function EventTop({ snap }: { snap: PlayerSnapshot }) {
+  const ev = snap.eventBoard;
+  if (!ev) return null;
+  const me = ev.me;
+  const rows: TopRow[] = ev.top.slice(0, 3).map((e) => ({ key: `${e.rank}-${e.name}`, name: e.name, score: e.score, rank: e.rank, me: !!me && me.rank === e.rank }));
+  const footer = me
+    ? <>You're <strong>#{me.rank}</strong> of {fmtNum(ev.total)} in {ev.eventName} <span class="c9-nw">· {fmtNum(me.score)} pts</span></>
+    : null;
+  return <TopBoard title={ev.eventName} rows={rows} footer={footer} emptyText="Event scores appear after this quiz." />;
 }
 
 function Leaderboard({ snap }: { snap: PlayerSnapshot }) {
   const q = snap.question;
-  const entries = snap.leaderboard ?? [];
   return (
     <div class="c9-p-lb">
       <div class="c9-p-lb__head">
         {q && <span class="c9-overline">After question {q.qIndex + 1} of {q.total}</span>}
         <h1 class="c9-p-display c9-p-display--m">Leaderboard</h1>
-        {rankLine(snap.me.rank, snap.playerCount)}
       </div>
-      {entries.length > 0
-        ? <BoardList entries={entries} meId={snap.me.id} me={snap.me} />
-        : <p class="yy-empty">No scores yet.</p>}
+      <QuizTop snap={snap} />
+      <EventTop snap={snap} />
     </div>
   );
 }
 
 function Finished({ snap }: { snap: PlayerSnapshot }) {
-  const board = snap.leaderboard ?? [];
-  const top = board.slice(0, 3);
-  const order = [top[1], top[0], top[2]];
-  const rest = board.slice(3);
   const rank = snap.me.rank;
   return (
     <div class="c9-p-fin">
@@ -264,18 +277,8 @@ function Finished({ snap }: { snap: PlayerSnapshot }) {
           <p class="c9-p-lead"><strong>{fmtNum(snap.me.score)}</strong> points</p>
         )}
       </div>
-      {top.length > 0 && (
-        <div class="c9-p-podium" aria-label="Top 3">
-          {order.map((e, idx) => e ? (
-            <div key={e.playerId} class={`c9-p-podium__col c9-p-podium__col--${e.rank} ${e.playerId === snap.me.id ? 'is-me' : ''}`}>
-              <span class="c9-p-podium__name">{e.name}</span>
-              <span class="c9-p-podium__score">{fmtNum(e.score)}</span>
-              <span class="c9-p-podium__step"><span class="c9-p-podium__place">{e.rank}</span></span>
-            </div>
-          ) : <div key={`empty-${idx}`} class="c9-p-podium__col" />)}
-        </div>
-      )}
-      {rest.length > 0 && <BoardList entries={rest} all={board} meId={snap.me.id} me={snap.me} />}
+      <QuizTop snap={snap} />
+      <EventTop snap={snap} />
       <div class="c9-p-fin__end">
         <h2 class="c9-p-fin__thanks">Thanks for playing</h2>
         <a class="yy-btn yy-btn--secondary yy-btn--lg c9-p-wide" href="/" onClick={linkClick}>Back to home</a>

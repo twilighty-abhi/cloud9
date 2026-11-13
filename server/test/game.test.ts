@@ -34,7 +34,7 @@ function makeQuiz(lastLimitSec = 1): QuizDef {
     id, text: `Question ${id}`, imageUrl: null, options: ['A', 'B', 'C', 'D'], correctIndex, timeLimitSec, pointsMax: 1000,
   });
   return {
-    id: 'quiz1', moderatorId: 'mod1', title: 'Test Quiz', emailMode: 'optional', scoring: 'speed',
+    id: 'quiz1', moderatorId: 'mod1', eventId: null, title: 'Test Quiz', emailMode: 'optional', scoring: 'speed',
     questions: [q('q1', 1), q('q2', 2), q('q3', 0, lastLimitSec)], createdAt: 1, updatedAt: 1,
   };
 }
@@ -129,7 +129,7 @@ test('registry join rules', async () => {
   const { registry, teardown } = await setup();
   try {
     const quiz = { ...makeQuiz(), emailMode: 'required' as const };
-    const s = registry.createSession({ quiz, moderatorId: 'mod1', label: '  Hall   A ', listed: true });
+    const s = registry.createSession({ quiz, moderatorId: 'mod1', event: null, label: '  Hall   A ', listed: true });
     assert.match(s.code, /^\d{6}$/);
     assert.equal(s.label, 'Hall A');
     assert.equal(s.joinUrl, `http://quiz.test/join/${s.code}`);
@@ -157,7 +157,7 @@ test('full game over websockets', async () => {
   const { repo, registry, port, teardown } = await setup();
   const clients: Client[] = [];
   try {
-    const s = registry.createSession({ quiz: makeQuiz(1), moderatorId: 'mod1', label: 'Room', listed: true });
+    const s = registry.createSession({ quiz: makeQuiz(1), moderatorId: 'mod1', event: null, label: 'Room', listed: true });
     const code = s.code;
     const j1 = registry.join(code, { name: 'Anu' });
     const j2 = registry.join(code, { name: 'Bob' });
@@ -377,7 +377,7 @@ test('full game over websockets', async () => {
 test('restore turns open QUESTION into CLOSED with scores intact', async () => {
   const repo = new FakeRepo();
   const a = await setup(repo);
-  const s = a.registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', label: '', listed: false });
+  const s = a.registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: false });
   const j = a.registry.join(s.code, { name: 'Zed' });
   const j2 = a.registry.join(s.code, { name: 'Yan' });
   assert.ok(j.ok && j2.ok);
@@ -417,3 +417,200 @@ test('restore turns open QUESTION into CLOSED with scores intact', async () => {
     await b.teardown();
   }
 });
+
+// ───────────── events ─────────────
+import { openRepo } from '../src/db/repo';
+import { Registry as RegistryClass } from '../src/game/registry';
+import type { EventDef } from '../../shared/model';
+
+function eventQuiz(id: string, eventId: string): QuizDef {
+  return {
+    id, moderatorId: 'mod1', eventId, title: `Quiz ${id}`, emailMode: 'off', scoring: 'flat',
+    questions: [{ id: `${id}_q1`, text: 'Q?', imageUrl: null, options: ['A', 'B'], correctIndex: 0, timeLimitSec: 20, pointsMax: 1000 }],
+    createdAt: 1, updatedAt: 1,
+  };
+}
+
+test('events: cumulative board across sessions, top-3 for players, rebind by email, kicked email, forced email', async () => {
+  const repo = openRepo(':memory:');
+  const { registry, port, teardown } = await setup(repo as any);
+  const clients: Client[] = [];
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const ev: EventDef = { id: 'ev1', moderatorId: 'mod1', name: 'CCD Kochi', emailRequired: true, createdAt: 1, updatedAt: 1 };
+    repo.saveEvent(ev);
+    const qa = eventQuiz('qa', ev.id);
+    const qb = eventQuiz('qb', ev.id);
+    repo.saveQuiz(qa);
+    repo.saveQuiz(qb);
+    const s1 = registry.createSession({ quiz: qa, event: ev, moderatorId: 'mod1', label: 'Hall A', listed: true });
+    const s2 = registry.createSession({ quiz: qb, event: ev, moderatorId: 'mod1', label: 'Hall B', listed: true });
+    assert.equal(s1.eventId, 'ev1');
+    assert.equal(s1.eventName, 'CCD Kochi');
+    assert.equal(registry.publicList().find((p) => p.code === s1.code)!.eventName, 'CCD Kochi');
+    assert.deepEqual(registry.liveCountByEvent().get('ev1'), 2);
+
+    // event.emailRequired forces email even though quiz.emailMode is 'off'
+    const info = registry.playInfo(s1.code)!;
+    assert.equal(info.emailMode, 'required');
+    assert.equal(info.eventName, 'CCD Kochi');
+    assert.deepEqual(registry.join(s1.code, { name: 'NoMail' }), { ok: false, error: 'email_required' });
+
+    const join = (code: string, name: string, email: string) => {
+      const r = registry.join(code, { name, email });
+      assert.ok(r.ok, JSON.stringify(r));
+      return r as Extract<typeof r, { ok: true }>;
+    };
+    const alice = join(s1.code, 'Alice', 'alice@x.test');
+    const bob = join(s1.code, 'Bob', 'bob@x.test');
+    const carol = join(s1.code, 'Carol', 'carol@x.test');
+    const frank = join(s1.code, 'Frank', 'frank@x.test');
+    const dave = join(s1.code, 'Dave', 'dave@x.test');
+    assert.equal(alice.rejoined, false);
+    const room1 = registry.get(s1.code)!;
+    assert.equal(room1.activeCount(), 5);
+
+    // rebind by email (case-insensitive): same player, fresh token, no duplicate
+    const again = join(s1.code, 'Someone else', '  ALICE@x.test ');
+    assert.equal(again.rejoined, true);
+    assert.equal(again.playerId, alice.playerId);
+    assert.equal(again.name, 'Alice');
+    assert.notEqual(again.token, alice.token);
+    assert.equal(room1.activeCount(), 5);
+    assert.equal(repo.listPlayers(s1.id).length, 5);
+    // rebind works even when joining is closed
+    registry.patch(s1.code, { joinOpen: false });
+    assert.equal(join(s1.code, 'Bob', 'bob@x.test').rejoined, true);
+    assert.deepEqual(registry.join(s1.code, { name: 'New', email: 'new@x.test' }), { ok: false, error: 'join_closed' });
+    registry.patch(s1.code, { joinOpen: true });
+
+    // kicked email stays kicked
+    assert.deepEqual(room1.kick(dave.playerId), { ok: true });
+    assert.deepEqual(registry.join(s1.code, { name: 'Dave', email: 'dave@x.test' }), { ok: false, error: 'kicked' });
+
+    // sockets: the rebound token works
+    const pa = await connect(port, `role=player&code=${s1.code}&token=${again.token}`);
+    const pb = await connect(port, `role=player&code=${s1.code}&token=${bob.token}`);
+    const pres1 = await connect(port, `role=present&code=${s1.code}`);
+    const mod1 = await connect(port, `role=mod&code=${s1.code}`, 'c9_session=mod1');
+    clients.push(pa, pb, pres1, mod1);
+    const lobby = await pa.state('LOBBY');
+    assert.equal(lobby.eventName, 'CCD Kochi');
+    assert.equal(lobby.eventBoard, null);
+    assert.equal(lobby.me.id, alice.playerId);
+
+    // s1: alice, bob, frank correct; carol wrong
+    assert.deepEqual(room1.modAction('start', -1), { ok: true });
+    const pm = (id: string) => room1.players.get(id)!;
+    // (unconnected players first: auto-close fires once every CONNECTED player answered)
+    assert.ok(room1.answer(pm(frank.playerId), 0, 0).ok);
+    assert.ok(room1.answer(pm(carol.playerId), 0, 1).ok);
+    assert.ok(room1.answer(pm(alice.playerId), 0, 0).ok);
+    assert.ok(room1.answer(pm(bob.playerId), 0, 0).ok);
+    // persisted immediately (not deferred): the event board already counts it
+    assert.equal(repo.eventLeaderboard('ev1').find((e) => e.key === 'alice@x.test')!.score, 1000);
+    if (room1.state === 'QUESTION') room1.modAction('close', 0);
+    assert.deepEqual(room1.modAction('reveal', 0), { ok: true });
+    assert.deepEqual(room1.modAction('leaderboard', 0), { ok: true });
+    const lbA = await pa.state('LEADERBOARD');
+    assert.equal(lbA.leaderboard.length, 3); // top 3 only for players
+    assert.equal(lbA.eventBoard.eventName, 'CCD Kochi');
+    assert.equal(lbA.eventBoard.top.length, 3);
+    assert.equal(lbA.eventBoard.total, 4); // alice, bob, frank, carol (dave kicked)
+    assert.equal(lbA.eventBoard.me.score, 1000);
+    const lbMod = await mod1.state('LEADERBOARD');
+    assert.equal(lbMod.leaderboard.length, 4);
+    assert.equal(lbMod.eventBoard.top.length, 4);
+    assert.equal(lbMod.eventName, 'CCD Kochi');
+    await pres1.state('LEADERBOARD');
+    assert.deepEqual(room1.modAction('next', 0), { ok: true });
+    await pa.state('FINISHED');
+    await pres1.state('FINISHED');
+
+    // s2: alice (again) + eve
+    const alice2 = join(s2.code, 'Ali', 'Alice@X.test');
+    assert.equal(alice2.rejoined, false);
+    const eve = join(s2.code, 'Eve', 'eve@x.test');
+    const room2 = registry.get(s2.code)!;
+    const qa2 = await connect(port, `role=player&code=${s2.code}&token=${alice2.token}`);
+    const qe = await connect(port, `role=player&code=${s2.code}&token=${eve.token}`);
+    const pres2 = await connect(port, `role=present&code=${s2.code}`);
+    clients.push(qa2, qe, pres2);
+    await qa2.state('LOBBY');
+    await pres2.state('LOBBY');
+    await sleep(5);
+    room2.modAction('start', -1);
+    assert.ok(room2.answer(room2.players.get(eve.playerId)!, 0, 1).ok);
+    assert.ok(room2.answer(room2.players.get(alice2.playerId)!, 0, 0).ok);
+    if (room2.state === 'QUESTION') room2.modAction('close', 0);
+    room2.modAction('reveal', 0);
+    room2.modAction('leaderboard', 0);
+    const lb2 = await qa2.state('LEADERBOARD');
+    assert.deepEqual(lb2.eventBoard.me, { rank: 1, score: 2000 });
+    assert.equal(lb2.eventBoard.total, 5);
+    assert.equal(lb2.eventBoard.top[0].name, 'Ali'); // most recent join's name
+    assert.equal(lb2.eventBoard.top[0].score, 2000);
+    const lbe = await qe.state('LEADERBOARD');
+    assert.equal(lbe.eventBoard.me.rank, 5); // 0 points, joined last
+    const p2 = await pres2.state('LEADERBOARD');
+    assert.equal(p2.eventBoard.top.length, 5);
+    assert.equal(p2.eventBoard.total, 5);
+
+    const board = repo.eventLeaderboard('ev1');
+    assert.deepEqual(board.map((e) => [e.key, e.score, e.quizzesPlayed, e.rank]), [
+      ['alice@x.test', 2000, 2, 1], ['bob@x.test', 1000, 1, 2], ['frank@x.test', 1000, 1, 3], ['carol@x.test', 0, 1, 4], ['eve@x.test', 0, 1, 5],
+    ]);
+
+    // emails never reach players or the projector
+    for (const c of [pa, pb, pres1, qa2, qe, pres2]) {
+      for (const m of c.msgs) assert.ok(!JSON.stringify(m).includes('@'), `email leaked: ${JSON.stringify(m)}`);
+    }
+    for (const m of mod1.msgs) assert.ok(!JSON.stringify(m).includes('@x.test'), 'host payload must not carry emails');
+
+    // restore: a fresh registry picks up event name + forced email for unfinished sessions
+    const s3 = registry.createSession({ quiz: qa, event: ev, moderatorId: 'mod1', label: 'Hall C', listed: true });
+    const fresh = new RegistryClass(repo, config);
+    try {
+      fresh.restore();
+      const info3 = fresh.playInfo(s3.code)!;
+      assert.equal(info3.eventName, 'CCD Kochi');
+      assert.equal(info3.emailMode, 'required');
+      assert.equal(fresh.summary(s3.code)!.eventId, 'ev1');
+      // rebind-by-email works after restore too
+      const room2r = fresh.get(s2.code)!;
+      assert.ok(room2r);
+      const rj = fresh.join(s2.code, { name: 'x', email: 'eve@x.test' });
+      assert.ok(rj.ok && rj.rejoined && rj.playerId === eve.playerId);
+      assert.equal(repo.listPlayers(s2.id).find((p) => p.id === eve.playerId)!.tokenHash, sha(rj.ok ? rj.token : ''));
+    } finally {
+      fresh.shutdown();
+    }
+  } finally {
+    clients.forEach((c) => c.close());
+    await teardown();
+    repo.close();
+  }
+});
+
+test('events: no event → eventName/eventBoard null; quiz emailMode honoured', async () => {
+  const { registry, teardown } = await setup();
+  try {
+    const s = registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: true });
+    assert.equal(registry.playInfo(s.code)!.emailMode, 'optional');
+    assert.equal(registry.playInfo(s.code)!.eventName, null);
+    const j = registry.join(s.code, { name: 'A' });
+    assert.ok(j.ok && !j.rejoined);
+    const room = registry.get(s.code)!;
+    room.modAction('end', -1);
+    const snap = room.playerSnapshot(room.players.get(j.ok ? j.playerId : '')!);
+    assert.equal(snap.eventBoard, null);
+    assert.equal(snap.eventName, null);
+    assert.equal(room.hostSnapshot('mod').eventBoard, null);
+    assert.equal(registry.liveCountByEvent().size, 0);
+  } finally {
+    await teardown();
+  }
+});
+
+import { createHash as _createHash } from 'node:crypto';
+function sha(s: string) { return _createHash('sha256').update(s).digest('hex'); }

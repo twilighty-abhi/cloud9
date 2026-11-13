@@ -9,7 +9,9 @@ import { Message, Shell } from './parts';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function friendly(e: unknown): { field?: 'name' | 'email'; msg: string; fatal?: 'not_found' | 'finished' | 'closed' } {
+type Fatal = 'not_found' | 'finished' | 'closed' | 'kicked';
+
+function friendly(e: unknown): { field?: 'name' | 'email'; msg: string; fatal?: Fatal } {
   if (e instanceof HttpError) {
     switch (e.code) {
       case 'not_found': return { msg: "We couldn't find this quiz.", fatal: 'not_found' };
@@ -19,6 +21,7 @@ function friendly(e: unknown): { field?: 'name' | 'email'; msg: string; fatal?: 
       case 'email_required': return { field: 'email', msg: 'Add your email to join this quiz.' };
       case 'invalid_email': return { field: 'email', msg: "That email doesn't look right. Check it and try again." };
       case 'invalid_name': return { field: 'name', msg: `Enter a name, up to ${DEFAULTS.nameMax} characters.` };
+      case 'kicked': return { msg: 'You were removed from this quiz.', fatal: 'kicked' };
       case 'rate_limited': return { msg: 'Too many tries from this network. Wait a minute and try again.' };
     }
     if (e.status === 404) return { msg: "We couldn't find this quiz.", fatal: 'not_found' };
@@ -32,7 +35,7 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
   const { code } = props;
   const [info, setInfo] = useState<PlayInfo | null>(props.fixtureInfo ?? null);
   const [infoErr, setInfoErr] = useState<'not_found' | 'network' | null>(null);
-  const [fatal, setFatal] = useState<'not_found' | 'finished' | 'closed' | null>(null);
+  const [fatal, setFatal] = useState<Fatal | null>(null);
   const [name, setName] = useState(() => getLastName().slice(0, DEFAULTS.nameMax));
   const [email, setEmail] = useState(() => getLastEmail());
   const [busy, setBusy] = useState(false);
@@ -62,6 +65,9 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
     );
   }
   if (!info) return <Shell><div class="c9-p-center"><div class="c9-p-spinner" aria-label="Loading" /></div></Shell>;
+  if (fatal === 'kicked') {
+    return <Message title="You were removed from this quiz" body="The host removed you from this quiz. If you think this was a mistake, talk to the host." home />;
+  }
   if (info.state === 'FINISHED' || fatal === 'finished') {
     return <Message title="This quiz has ended" body="Thanks for stopping by. Look for another live quiz on the home page." home />;
   }
@@ -102,6 +108,7 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
     <Shell>
       <form class="c9-p-join" onSubmit={submit} noValidate>
         <div class="c9-p-join__head">
+          {info.eventName && <span class="c9-overline c9-p-join__event">{info.eventName}</span>}
           <span class="c9-overline">Code {fmtCode(code)}</span>
           <h1 class="c9-p-join__title">{info.title}</h1>
           {info.label && <p class="c9-p-join__label">{info.label}</p>}
@@ -116,14 +123,19 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
         </div>
         {emailShown && (
           <div class="yy-field">
-            <label class="yy-label" for="c9-p-email">Email {!emailRequired && <span class="yy-optional">(optional)</span>}</label>
+            <label class="yy-label" for="c9-p-email">
+              Email {emailRequired
+                ? <span class="c9-p-req">(required{info.eventName ? ' — used for the event leaderboard' : ''})</span>
+                : <span class="yy-optional">(optional)</span>}
+            </label>
             <input id="c9-p-email" class="yy-input c9-p-input" type="email" inputMode="email" autoComplete="email"
+              required={emailRequired} aria-required={emailRequired ? 'true' : undefined}
               maxLength={DEFAULTS.emailMax} value={email} placeholder="you@example.com"
               aria-invalid={err?.field === 'email' ? 'true' : undefined}
               onInput={(e) => setEmail((e.currentTarget as HTMLInputElement).value)} />
             {err?.field === 'email'
               ? <p class="yy-help yy-help--error" role="alert">{err.msg}</p>
-              : <p class="yy-help">Only the host can see this.</p>}
+              : <p class="yy-help">{info.eventName ? 'Use the same email in every quiz so your points add up. Only the hosts see it.' : 'Only the host can see this.'}</p>}
           </div>
         )}
         {err && !err.field && <p class="yy-help yy-help--error c9-p-join__err" role="alert">{err.msg}</p>}

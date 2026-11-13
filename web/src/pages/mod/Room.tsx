@@ -2,10 +2,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Me, SessionSummary } from '../../../../shared/api';
 import type { HostSnapshot, ModAction } from '../../../../shared/protocol';
-import type { LeaderEntry } from '../../../../shared/model';
+import type { BoardTop } from '../../../../shared/model';
 import { useRoom, useTick, type RoomConn } from '../../lib/ws';
 import { hostFixture } from '../../dev/modFixtures';
-import { fixture, mutate, errMsg, Link, Logo, Chip, Switch, LETTERS, qrSrc, fmtNum } from './common';
+import { fixture, load, mutate, errMsg, Link, Logo, Chip, Switch, LETTERS, qrSrc, fmtNum } from './common';
 
 type Conn = RoomConn<HostSnapshot>;
 
@@ -71,7 +71,23 @@ function primaryFor(s: HostSnapshot): PrimaryDef {
   }
 }
 
+/** HostSnapshot carries the event NAME only; look the event id up from the moderator's session list (once). */
+function useEventId(code: string, eventName: string | null): string | null {
+  const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!eventName || id) return;
+    let alive = true;
+    load<SessionSummary[]>('/api/sessions')
+      .then((l) => { const s = (l ?? []).find((x) => x.code === code); if (alive && s?.eventId) setId(s.eventId); })
+      .catch(() => { /* breadcrumb just stays unlinked */ });
+    return () => { alive = false; };
+  }, [code, eventName]);
+  return id;
+}
+
 function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
+  const lookedUp = useEventId(snap.code, snap.eventId ? null : snap.eventName);
+  const eventId = snap.eventId ?? lookedUp;
   const [pendingV, setPendingV] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -133,6 +149,9 @@ function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
         <Logo />
         <Link href="/mod" class="yy-btn yy-btn--quiet yy-btn--sm c9-m-hide-sm">← Dashboard</Link>
         <div class="c9-m-roomhead__title">
+          {snap.eventName && (eventId
+            ? <><Link href={`/mod/event/${eventId}`} class="c9-m-crumb" title="Open the event page">{snap.eventName}</Link><span class="c9-muted c9-m-crumbsep"> / </span></>
+            : <><span class="c9-m-crumb">{snap.eventName}</span><span class="c9-muted c9-m-crumbsep"> / </span></>)}
           <strong>{snap.title}</strong>
           {snap.label && <span class="c9-muted"> · {snap.label}</span>}
         </div>
@@ -146,6 +165,9 @@ function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
       <div class="c9-m-room">
         <main class="c9-m-room__main">
           <Stage conn={conn} snap={snap} />
+          {snap.eventBoard && (snap.state === 'LEADERBOARD' || snap.state === 'FINISHED') && (
+            <EventBoardCard board={snap.eventBoard} eventId={eventId} finished={snap.state === 'FINISHED'} />
+          )}
           {snap.nextQuestion && snap.state !== 'FINISHED' && (
             <section class="c9-m-next" aria-label="Up next">
               <div class="c9-overline">Up next · Question {snap.qIndex + 2} of {snap.total}</div>
@@ -188,6 +210,9 @@ function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
             <button class="yy-btn yy-btn--secondary yy-btn--lg" onClick={() => act('next')} disabled={pending}>
               {last ? 'Finish quiz' : 'Next question'}
             </button>
+          )}
+          {snap.state === 'FINISHED' && eventId && (
+            <Link href={`/mod/event/${eventId}#lb`} class="yy-btn yy-btn--quiet yy-btn--lg c9-m-hide-sm">Event leaderboard →</Link>
           )}
           {snap.state === 'FINISHED' && (
             <Link href="/mod" class="yy-btn yy-btn--secondary yy-btn--lg">Dashboard</Link>
@@ -287,7 +312,10 @@ function Stage({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
       )}
 
       {(snap.state === 'LEADERBOARD' || snap.state === 'FINISHED') && (
-        <Leaderboard entries={snap.leaderboard} podium={snap.state === 'FINISHED'} />
+        <>
+          {snap.eventBoard && <div class="c9-overline">This quiz</div>}
+          <Leaderboard entries={snap.leaderboard} podium={snap.state === 'FINISHED'} />
+        </>
       )}
       {snap.state === 'FINISHED' && (
         <p class="c9-muted c9-m-small">Download the CSV for every player's name, email, score and per-question answers.</p>
@@ -339,7 +367,28 @@ function Options({ snap }: { snap: HostSnapshot }) {
   );
 }
 
-function Leaderboard({ entries, podium }: { entries: LeaderEntry[]; podium: boolean }) {
+function EventBoardCard({ board, eventId, finished }: { board: NonNullable<HostSnapshot['eventBoard']>; eventId: string | null; finished: boolean }) {
+  return (
+    <section class="yy-card c9-m-evboard" aria-labelledby="evb-h">
+      <div class="c9-m-evboard__head">
+        <div>
+          <div class="c9-overline">Event standings · all quizzes</div>
+          <h3 id="evb-h" class="c9-m-h4">{board.eventName}</h3>
+        </div>
+        <span class="c9-spacer" />
+        <span class="c9-muted c9-m-small">{fmtNum(board.total)} player{board.total === 1 ? '' : 's'} in the event</span>
+      </div>
+      <Leaderboard entries={board.top} podium={false} />
+      {eventId && (
+        <div class="c9-m-evboard__foot">
+          <Link href={`/mod/event/${eventId}#lb`} class={`yy-btn ${finished ? 'yy-btn--secondary' : 'yy-btn--quiet'} yy-btn--sm`}>Event leaderboard →</Link>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Leaderboard({ entries, podium }: { entries: BoardTop[]; podium: boolean }) {
   if (!entries.length) return <div class="yy-empty">No scores yet.</div>;
   return (
     <ol class={`c9-m-lb ${podium ? 'is-podium' : ''}`}>
