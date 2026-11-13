@@ -20,8 +20,8 @@ services:
       PORT: "3000"
     volumes:
       - ./data:/data
-    mem_limit: 384m
-    cpus: 1.0
+    mem_limit: 2g
+    cpus: 2.0
     ports:
       # Reachable only from the host (Nginx/Caddy on the host proxies to it).
       # For quick testing on http://<server-ip>:3000 change to "3000:3000" (revert afterwards).
@@ -49,7 +49,7 @@ services:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    mem_limit: 64m
+    mem_limit: 256m
     logging: *logging
 
 volumes:

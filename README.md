@@ -43,7 +43,7 @@ Changing `.env` needs `docker compose up -d` (recreates the container), not just
 
 Update to a new version: `git pull && docker compose up -d --build`. Live rooms are restored from SQLite on boot.
 
-Resource limits (compose): 384 MB RAM, 1 CPU, Node heap capped at 256 MB, logs rotated at 10 MB × 3.
+Resource limits (compose): 2 GB RAM, 2 CPUs, Node heap up to 1.5 GB (real use ~130 MB at 250 players), logs rotated at 10 MB × 3.
 
 ## Creating quizzes
 
@@ -100,7 +100,7 @@ docker compose exec app node -e "require('better-sqlite3')('/data/cloud9.db').ba
 
 **During**
 ```bash
-docker stats                            # RAM should stay well under 384 MB, CPU < 70 %
+docker stats                            # RAM ~130–200 MB at 250 players; limit is 2 GB
 docker compose logs -f --tail=100 app   # errors only at LOG_LEVEL=warn
 curl -s localhost:3000/healthz          # rooms / sockets / rssMb
 ```

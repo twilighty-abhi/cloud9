@@ -13,7 +13,7 @@
 | Concurrent players | Design for **200+**, expect 100–120 |
 | Rooms | Many at once, one moderator per room |
 | Server | Hetzner, 4 GB RAM / 2 vCPU, ~1 GB already used by other workloads |
-| Budget for Cloud 9 | ≤ 384 MB RAM, < 1 vCPU at peak |
+| Budget for Cloud 9 | Limit 2 GB RAM / 2 CPUs (measured: ~130 MB, ~3% CPU at 250 players) |
 | Deploy | `docker compose up -d`, single command |
 | UI | Minimal, Yuyu Design System look |
 | Participant friction | Scan QR → type name → play. No signup |
@@ -315,7 +315,7 @@ Tactics:
 - Throttle `lobby` and `progress` updates to 4 per second.
 - `permessage-deflate` **off** (saves CPU; payloads are tiny).
 - Static assets: immutable hashed filenames, `Cache-Control: max-age=31536000`, gzip/brotli via Caddy.
-- Container limits: `mem_limit: 384m`, `cpus: 1.0`.
+- Container limits: `mem_limit: 2g`, `cpus: 2.0`, Node heap 1.5 GB.
 
 ---
 
@@ -428,8 +428,8 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes: [ "./data:/data" ]
-    mem_limit: 384m
-    cpus: 1.0
+    mem_limit: 2g
+    cpus: 2.0
     expose: [ "3000" ]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
@@ -584,7 +584,7 @@ Rules for the agents:
 | Proxy kills idle WebSockets | Medium | 20 s heartbeats; long proxy read timeout |
 | Port 80/443 already taken on the server | Medium | Use the existing proxy instead of Caddy (see §17) |
 | Scope creep tonight | High | Strict v1 list; present mode cut first |
-| Other workloads starve CPU | Low | `cpus: 1.0` reserve; load test on the real box |
+| Other workloads starve CPU | Low | Generous limits (2 GB / 2 CPUs); load test on the real box |
 
 ---
 
