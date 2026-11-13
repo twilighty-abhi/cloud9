@@ -18,7 +18,7 @@ async function main() {
   const game = createGame({ repo, config });
   const restored = game.registry.restore();
 
-  const app = Fastify({ trustProxy: true, bodyLimit: 2_000_000, logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
+  const app = Fastify({ trustProxy: 1, bodyLimit: 2_000_000, logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
 
   app.get('/healthz', async () => {
     const s = game.registry.stats();

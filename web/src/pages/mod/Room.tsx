@@ -112,8 +112,13 @@ function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
     else if (e.code !== 'not_found' && e.code !== 'unauthorized') showToast(e.message || 'Something went wrong.');
   }, [conn.lastError]);
 
+  // Cooldown: ignore the primary action for 800 ms after any state change, so a double-press
+  // (Space twice) can't open AND immediately close the next question.
+  const changedAt = useRef(Date.now());
+  useEffect(() => { changedAt.current = Date.now(); }, [snap.state, snap.qIndex]);
   const act = (action: ModAction) => {
     if (pendingV !== null) return;
+    if (action !== 'end' && Date.now() - changedAt.current < 800) return;
     const ok = conn.send({ t: 'mod', action, expectQ: snap.qIndex });
     if (!ok) { showToast("Not connected — reconnecting. Try again in a moment."); return; }
     setPendingV(snap.v);
