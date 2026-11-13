@@ -64,6 +64,7 @@ function setup() {
       if (method === 'getMe') return { id: 1, username: 'Cloud9Bot' } as any;
       return true as any;
     },
+    async sendPhoto() {},
     async sendDocument() {},
   };
   const config = { publicUrl: 'https://quiz.test' } as Config;
@@ -289,6 +290,7 @@ function httpClient(base: string): TgClient {
       if (!j.ok) throw new TgError(j.description ?? 'err', j.error_code ?? res.status, null, false);
       return j.result as T;
     },
+    async sendPhoto() {},
     async sendDocument() {},
   };
 }

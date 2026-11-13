@@ -2,7 +2,7 @@
 //
 // A tiny node:http server that speaks enough of https://core.telegram.org/bots/api for the bot:
 //   getMe, deleteWebhook, setMyCommands, getUpdates (real long-poll), sendMessage, sendDocument (multipart),
-//   answerCallbackQuery, editMessageText.
+//   sendPhoto (multipart, raw bytes kept), answerCallbackQuery, editMessageText, editMessageReplyMarkup.
 // Every call is recorded in `calls`. Point the server at it with TELEGRAM_API_BASE=fake.url.
 //
 //   const tg = await startFakeTelegram({ token: '123:abc' });
@@ -15,13 +15,15 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-export interface TgDocument { field: string; filename: string; content: string; mime: string }
+/** An uploaded file. `content` is the body decoded as UTF-8 (fine for CSV); `bytes` is the raw body (use it for PNGs). */
+export interface TgDocument { field: string; filename: string; content: string; bytes: Buffer; mime: string }
 export interface TgCall {
   seq: number;
   at: number;
   method: string;
   params: Record<string, any>;   // JSON / form / multipart fields; reply_markup parsed to an object when possible
   document?: TgDocument;         // sendDocument only
+  photo?: TgDocument;            // sendPhoto only (multipart upload)
   status: number;                // HTTP status we answered with
 }
 export interface FailSpec { code: number; retry_after?: number; description?: string; times?: number }
@@ -47,7 +49,7 @@ export interface FakeTelegram {
   failNext(method: string, spec: FailSpec): void;
   /** Calls by method (and optional chat id). */
   callsOf(method: string, chatId?: string | number): TgCall[];
-  /** Everything the bot sent (sendMessage / sendDocument / editMessageText), optionally to one chat. */
+  /** Everything the bot sent (sendMessage / sendDocument / sendPhoto / editMessageText), optionally to one chat. */
   sent(chatId?: string | number): TgCall[];
   /** Highest seq so far (use as a `sinceSeq` marker). */
   mark(): number;
@@ -72,7 +74,9 @@ export const threadOf = (c: TgCall): number | null => {
 export const textOf = (c: TgCall): string => String(c.params.text ?? c.params.caption ?? '');
 /** Everything a human (or a leak check) could see in a call: text, caption, buttons, document name + body. */
 export const visibleOf = (c: TgCall): string =>
-  [textOf(c), c.params.reply_markup ? JSON.stringify(c.params.reply_markup) : '', c.document?.filename ?? '', c.document?.content ?? ''].join('\n');
+  [textOf(c), c.params.reply_markup ? JSON.stringify(c.params.reply_markup) : '', c.document?.filename ?? '', c.document?.content ?? '', c.photo?.filename ?? ''].join('\n');
+/** True if the bytes start with the PNG signature. */
+export const isPng = (b: Buffer | undefined): boolean => !!b && b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 /** All callback_data values of the inline keyboard on a call. */
 export const buttonsOf = (c: TgCall): string[] => {
   const kb = c.params.reply_markup?.inline_keyboard;
@@ -80,7 +84,7 @@ export const buttonsOf = (c: TgCall): string[] => {
   return kb.flat().map((b: any) => String(b?.callback_data ?? '')).filter(Boolean);
 };
 
-const SEND_METHODS = new Set(['sendMessage', 'sendDocument', 'editMessageText']);
+const SEND_METHODS = new Set(['sendMessage', 'sendDocument', 'sendPhoto', 'editMessageText']);
 
 function parseMaybeJson(v: unknown): unknown {
   if (typeof v !== 'string') return v;
@@ -110,7 +114,7 @@ function parseMultipart(body: Buffer, contentType: string): { fields: Record<str
     const name = /\bname="([^"]*)"/i.exec(disp)?.[1] ?? '';
     const filename = /\bfilename="([^"]*)"/i.exec(disp)?.[1];
     const mime = /content-type:\s*([^\r\n]+)/i.exec(head)?.[1]?.trim() ?? 'application/octet-stream';
-    if (filename !== undefined) files.push({ field: name, filename: Buffer.from(filename, 'latin1').toString('utf8'), content: value, mime });
+    if (filename !== undefined) files.push({ field: name, filename: Buffer.from(filename, 'latin1').toString('utf8'), content: value, bytes: Buffer.from(content, 'latin1'), mime });
     else fields[name] = value;
   }
   return { fields, files };
@@ -184,6 +188,7 @@ export async function startFakeTelegram(opts: { token?: string; botUsername?: st
     // params: query string + body (json / urlencoded / multipart)
     const params: Record<string, any> = Object.fromEntries(url.searchParams);
     let document: TgDocument | undefined;
+    let photo: TgDocument | undefined;
     const ct = String(req.headers['content-type'] ?? '');
     try {
       if (body.length) {
@@ -192,7 +197,8 @@ export async function startFakeTelegram(opts: { token?: string; botUsername?: st
         else if (ct.includes('multipart/form-data')) {
           const mp = parseMultipart(body, ct);
           Object.assign(params, mp.fields);
-          document = mp.files.find((f) => f.field === 'document') ?? mp.files[0];
+          if (method === 'sendPhoto') photo = mp.files.find((f) => f.field === 'photo') ?? mp.files[0];
+          else document = mp.files.find((f) => f.field === 'document') ?? mp.files[0];
         }
       }
     } catch {
@@ -200,7 +206,7 @@ export async function startFakeTelegram(opts: { token?: string; botUsername?: st
     }
     for (const k of ['reply_markup', 'allowed_updates', 'commands']) if (k in params) params[k] = parseMaybeJson(params[k]);
 
-    const call: TgCall = { seq: ++seq, at: Date.now(), method, params, document, status: 200 };
+    const call: TgCall = { seq: ++seq, at: Date.now(), method, params, document, ...(photo ? { photo } : {}), status: 200 };
     calls.push(call);
     log(method, JSON.stringify(params).slice(0, 200));
     const reply = (status: number, fn: () => void) => { call.status = status; fn(); notify(); };
@@ -226,6 +232,7 @@ export async function startFakeTelegram(opts: { token?: string; botUsername?: st
       case 'deleteWebhook':
       case 'setMyCommands':
       case 'answerCallbackQuery':
+      case 'editMessageReplyMarkup':
         return reply(200, () => ok(res, true));
       case 'sendMessage': {
         if (!needChat()) return;
@@ -237,6 +244,13 @@ export async function startFakeTelegram(opts: { token?: string; botUsername?: st
         if (!document && !params.document) return reply(400, () => err(res, 400, 'Bad Request: there is no document in the request'));
         const doc = { file_id: `f${seq}`, file_unique_id: `u${seq}`, file_name: document?.filename ?? 'file', mime_type: document?.mime, file_size: Buffer.byteLength(document?.content ?? '') };
         return reply(200, () => ok(res, makeMessage(String(params.chat_id), params, { document: doc, ...(params.caption ? { caption: String(params.caption) } : {}) })));
+      }
+      case 'sendPhoto': {
+        if (!needChat()) return;
+        if (!photo && !params.photo) return reply(400, () => err(res, 400, 'Bad Request: there is no photo in the request'));
+        const size = photo?.bytes.length ?? 0;
+        const sizes = [{ file_id: `p${seq}`, file_unique_id: `pu${seq}`, width: 320, height: 320, file_size: size }];
+        return reply(200, () => ok(res, makeMessage(String(params.chat_id), params, { photo: sizes, ...(params.caption ? { caption: String(params.caption) } : {}) })));
       }
       case 'editMessageText': {
         if (!needChat()) return;

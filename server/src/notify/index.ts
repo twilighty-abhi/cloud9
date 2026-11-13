@@ -7,6 +7,7 @@ import { createSender } from './sender';
 import { attachNotifications } from './notifications';
 import { createCommandRouter } from './commands';
 import { startPoller } from './poller';
+import { createActions } from './actions';
 
 export function startTelegram(deps: { config: Config; repo: Repo; registry: GameRegistry; restoredRooms: number }): { stop(): Promise<void> } | null {
   const cfg = deps.config.telegram;
@@ -16,7 +17,8 @@ export function startTelegram(deps: { config: Config; repo: Repo; registry: Game
     const sender = createSender({ cfg, dbPath: deps.config.dbPath, client });
     sender.start();
     const notes = attachNotifications({ cfg, bus, sender, repo: deps.repo, registry: deps.registry, config: deps.config });
-    const router = createCommandRouter({ cfg, client, sender, repo: deps.repo, registry: deps.registry, config: deps.config });
+    const actions = createActions({ cfg, client, sender, repo: deps.repo, registry: deps.registry, config: deps.config, bus });
+    const router = createCommandRouter({ cfg, client, sender, repo: deps.repo, registry: deps.registry, config: deps.config, actions });
     const poller = startPoller({ cfg, client, router });   // also calls deleteWebhook + setMyCommands
     bus.emit({ type: 'system.started', at: Date.now(), actor: null, restoredRooms: deps.restoredRooms, moderators: deps.config.moderators.length });
     console.log(`[cloud9] telegram on · ${cfg.notifyChatIds.length} notify chat(s) · ${cfg.adminIds.length} admin(s)`);

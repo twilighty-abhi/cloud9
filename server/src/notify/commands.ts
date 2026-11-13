@@ -65,7 +65,7 @@ const fmtTime = (ms: number | null | undefined): string => {
 };
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : w.endsWith('z') ? 'zes' : 's'}`;
 
-export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, repo, registry, config }) => {
+export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, repo, registry, config, actions }) => {
   const admins = new Set(cfg.adminIds.map(String));
   const lastPrivateReply = new Map<string, number>();
   let botUsername: string | null = null;
@@ -157,8 +157,16 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
     `${medal(e.rank)} ${esc(e.name)}${ctx.isPrivate && e.email ? ` &lt;${esc(e.email)}&gt;` : ''} — ${b(e.score)}${extra}`;
 
   // ───────────── outputs ─────────────
+  /** Read-only commands, then admin actions (if wired), then help last. */
+  const allCommands = (): { command: string; description: string }[] => {
+    let extra: { command: string; description: string }[] = [];
+    try { extra = actions ? actions.commands() : []; } catch (err) { log('actions.commands failed', err); }
+    const base = COMMANDS.filter((c) => c.command !== 'help');
+    const helpCmd = COMMANDS.filter((c) => c.command === 'help');
+    return [...base, ...extra, ...helpCmd].map((c) => ({ ...c }));
+  };
   const help = (ctx: Ctx, prefix = '') =>
-    send(ctx, `${prefix}${b('Cloud 9 bot')}\n` + COMMANDS.map((c) => `/${c.command} — ${esc(c.description)}`).join('\n'));
+    send(ctx, `${prefix}${b('Cloud 9 bot')}\n` + allCommands().map((c) => `/${c.command} — ${esc(c.description)}`).join('\n'));
 
   const doLive = (ctx: Ctx) => {
     const live = liveSessions().sort((a, b2) => (a.label || '').localeCompare(b2.label || '') || b2.createdAt - a.createdAt);
@@ -420,6 +428,7 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
       await ensureBotUsername();
       if (botUsername && parsed.bot.toLowerCase() !== botUsername.toLowerCase()) return; // for another bot
     }
+    if (actions && (await actions.command(ctx, parsed.cmd, parsed.args, fromId))) return;
     await runCommand(ctx, parsed.cmd, parsed.args, !!parsed.bot);
   };
 
@@ -435,6 +444,8 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
     const ctx = ctxFrom(cq.message);
     if (!ctx) return;
     const data = typeof cq.data === 'string' ? cq.data : '';
+    const messageId = typeof cq.message?.message_id === 'number' ? cq.message.message_id : null;
+    if (actions && (await actions.callback(ctx, data, fromId, messageId))) return;
     runCallback(ctx, data);
   };
 
@@ -453,7 +464,7 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
       }
     },
     commands() {
-      return COMMANDS.map((c) => ({ ...c }));
+      return allCommands();
     },
   };
 };

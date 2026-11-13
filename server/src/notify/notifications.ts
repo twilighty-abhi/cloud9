@@ -153,7 +153,8 @@ export function createNotifications(
   const errMsg = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'error').replace(EMAIL_RE, '[x]').slice(0, 200);
 
   const enqueue = (m: OutMsg) => { try { sender.enqueue(m); } catch (err) { log(`enqueue failed ${errMsg(err)}`); } };
-  const broadcast = (base: Omit<OutMsg, 'chatId'>) => { for (const chatId of cfg.notifyChatIds) enqueue({ ...base, chatId }); };
+  // Topics only exist in groups (chat ids start with '-'); private chats get no thread id.
+  const broadcast = (base: Omit<OutMsg, 'chatId'>) => { for (const chatId of cfg.notifyChatIds) enqueue({ ...base, chatId, threadId: chatId.startsWith('-') ? base.threadId : null }); };
 
   const eventName = (id: string | null) => {
     if (!id) return null;

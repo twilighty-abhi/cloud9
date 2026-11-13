@@ -72,6 +72,15 @@ export class Registry implements GameRegistry {
     return out;
   }
 
+  endSession(code: string, actor: string | null): { ok: true } | { ok: false; error: 'not_found' | 'finished' } {
+    const r = this.rooms.get(code);
+    if (!r) return { ok: false, error: 'not_found' };
+    if (r.state === 'FINISHED') return { ok: false, error: 'finished' };
+    // Same path as the moderator's 'end' (persist + broadcast + session.finished); current qIndex bypasses the staleness check.
+    const res = r.modAction('end', r.qIndex, actor);
+    return res.ok ? { ok: true } : { ok: false, error: 'finished' };
+  }
+
   summary(code: string): SessionSummary | null {
     return this.rooms.get(code)?.summary() ?? null;
   }

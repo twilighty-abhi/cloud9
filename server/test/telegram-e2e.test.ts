@@ -7,6 +7,9 @@
 // Telegram assertions are collected as named checks and reported as separate subtests, so a run shows exactly which
 // behaviours are working and which are still pending. Quiz-flow assertions are hard failures: Telegram must never
 // break the game.
+//
+// Test 5 ("admin actions") drives the v2 Telegram admin actions (/newsession, /joining, /hide, /show, /end, each with a
+// confirm tap) and checks the effect through the HTTP API.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import WebSocket from 'ws';
-import { startFakeTelegram, chatOf, threadOf, textOf, visibleOf, type FakeTelegram, type TgCall } from './fakeTelegram';
+import { startFakeTelegram, chatOf, threadOf, textOf, visibleOf, buttonsOf, isPng, type FakeTelegram, type TgCall } from './fakeTelegram';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const TSX = join(ROOT, 'node_modules/.bin/tsx');
@@ -220,10 +223,10 @@ function checker() {
 }
 
 const mentionsCode = (s: string, code: string) => s.includes(code) || s.includes(`${code.slice(0, 3)} ${code.slice(3)}`);
-const isSend = (c: TgCall) => c.method === 'sendMessage' || c.method === 'sendDocument' || c.method === 'editMessageText';
+const isSend = (c: TgCall) => c.method === 'sendMessage' || c.method === 'sendDocument' || c.method === 'sendPhoto' || c.method === 'editMessageText';
 const dump = (tg: FakeTelegram, srv?: ServerProc) => () =>
   `--- telegram calls (${tg.calls.length}) ---\n` +
-  tg.calls.map((c) => `#${c.seq} ${c.status} ${c.method} chat=${chatOf(c)} thread=${threadOf(c)} ${JSON.stringify(textOf(c).slice(0, 160))}${c.document ? ` doc=${c.document.filename}` : ''}`).join('\n') +
+  tg.calls.map((c) => `#${c.seq} ${c.status} ${c.method} chat=${chatOf(c)} thread=${threadOf(c)} ${JSON.stringify(textOf(c).slice(0, 160))}${c.document ? ` doc=${c.document.filename}` : ''}${c.photo ? ` photo=${c.photo.filename}(${c.photo.bytes.length}B)` : ''}${buttonsOf(c).length ? ` btn=${buttonsOf(c).join('|')}` : ''}`).join('\n') +
   (srv ? `\n--- server log (tail) ---\n${srv.logs.slice(-40).join('\n')}` : '');
 
 const tgEnv = (tg: FakeTelegram) => ({
@@ -255,7 +258,7 @@ test('telegram e2e: notifications, routing, privacy, commands, buttons', { timeo
     check('poller calls deleteWebhook', !!hooks);
     const cmds = await tg.tryWaitFor((c) => c.method === 'setMyCommands', W);
     check('setMyCommands registered', !!cmds && Array.isArray(cmds.params.commands) && cmds.params.commands.length > 0, cmds ? JSON.stringify(cmds.params.commands) : 'not called');
-    const poll = await tg.tryWaitFor((c) => c.method === 'getUpdates', W);
+    const poll = await tg.tryWaitFor((c) => c.method === 'getUpdates', Math.max(W, 15000));
     check('poller long-polls getUpdates', !!poll && Number(poll.params.timeout) > 0, poll ? JSON.stringify(poll.params) : 'not called');
 
     // ── game ──
@@ -415,6 +418,201 @@ test('telegram e2e: Telegram down mid-game → answers still acked, messages del
   await report(t, dump(tg, srv));
 });
 
+// ───────────────────────────── 5. admin actions from Telegram ─────────────────────────────
+test('telegram e2e: admin actions', { timeout: 300_000 }, async (t) => {
+  const tg = await startFakeTelegram({ token: '123:abc' });
+  const srv = await startServer(tgEnv(tg)).catch(async (e) => { await tg.close(); throw e; });
+  const { check, report } = checker();
+  const call = api(srv.url);
+  try {
+    const anyCall = await tg.tryWaitFor(() => true, WAIT);
+    const wired = check('bot talks to the API at boot (index.ts wired)', !!anyCall, 'no call reached the fake Telegram after boot');
+    const W = wired ? WAIT : 1500;
+
+    // ── setup via the API: event (admin) + hall1's quiz ──
+    const adminCookie = await login(srv.url, 'admin', 'pw');
+    const hallCookie = await login(srv.url, 'hall1', 'a');
+    const ev = (await call('POST', '/api/events', { name: 'QA Conf ACT', emailRequired: true }, adminCookie)).json;
+    const title = 'Hall 1 · 2:40–3:10 PM · When AI Gets a Body · Sarath';
+    const quiz = (await call('POST', '/api/quizzes', {
+      eventId: ev.id, title, emailMode: 'required', scoring: 'flat',
+      questions: [{ text: 'What is 2+2?', options: ['3', '4', '5'], correctIndex: 1, timeLimitSec: 60 }],
+    }, hallCookie)).json;
+    // a second quiz in the same event, so /newsession has a list to show
+    const other = (await call('POST', '/api/quizzes', {
+      eventId: ev.id, title: 'Hall 2 · 3:20–3:50 PM · Robots in the Wild · Meera', emailMode: 'required', scoring: 'flat',
+      questions: [{ text: 'Sky colour?', options: ['Blue', 'Green'], correctIndex: 0, timeLimitSec: 60 }],
+    }, hallCookie)).json;
+    const sessionsOfQuiz = async () => ((await call('GET', '/api/sessions', undefined, hallCookie)).json as any[]).filter((s) => s.quizId === quiz.id);
+    const publicCodes = async () => ((await call('GET', '/api/public/sessions')).json as any[]).map((s) => String(s.code));
+    /** Poll until cond() holds (public list is cached ~2 s). */
+    const eventually = async (cond: () => Promise<boolean>, ms = 6000) => {
+      const end = Date.now() + ms;
+      for (;;) { if (await cond()) return true; if (Date.now() > end) return false; await sleep(250); }
+    };
+    const tryJoin = async (code: string, name: string, email: string) => {
+      const r = await fetch(`${srv.url}/api/play/${code}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, email }) });
+      let json: any = null;
+      try { json = await r.json(); } catch { /* */ }
+      return { status: r.status, json };
+    };
+    const toAdmin = (c: TgCall) => isSend(c) && chatOf(c) === ADMIN;
+    const say = async (from: number | string, chat: string, text: string, pred: (c: TgCall) => boolean, ms = W) => {
+      const m = tg.mark();
+      tg.userMessage(from, chat, text);
+      return tg.tryWaitFor(pred, ms, m);
+    };
+    const tap = async (from: number | string, chat: string, data: string, pred: (c: TgCall) => boolean, ms = W) => {
+      const m = tg.mark();
+      const u = tg.clickButton(from, chat, data);
+      const hit = await tg.tryWaitFor(pred, ms, m);
+      return { hit, cbId: u.callback_query.id as string, mark: m };
+    };
+    /** Telegram feedback for a callback: either the popup text (answerCallbackQuery) or a message/edit in the chat. */
+    const feedback = (chat: string, cbId: string, re: RegExp) => (c: TgCall) =>
+      (c.method === 'answerCallbackQuery' && c.params.callback_query_id === cbId && re.test(String(c.params.text ?? ''))) ||
+      (isSend(c) && chatOf(c) === chat && re.test(textOf(c)));
+
+    // ── /newsession → quiz buttons ──
+    const list = await say(555, ADMIN, '/newsession', (c) => toAdmin(c) && buttonsOf(c).includes(`nsq:${quiz.id}`));
+    check('/newsession → buttons include the quiz (nsq:<quizId>)', !!list && buttonsOf(list).includes(`nsq:${other.id}`), list ? buttonsOf(list).join('|') : 'no message to 555 with an nsq: button for the quiz');
+    // filtered: only the matching quiz (a single match may go straight to the preview)
+    const filtered = await say(555, ADMIN, '/newsession when ai', (c) => toAdmin(c) && (buttonsOf(c).includes(`nsq:${quiz.id}`) || buttonsOf(c).includes(`nsy:${quiz.id}`)));
+    check('/newsession <text> filters the quiz list', !!filtered && !buttonsOf(filtered).some((d) => d.endsWith(other.id)), filtered ? buttonsOf(filtered).join('|') : 'no reply offering the quiz');
+
+    // ── tap quiz → preview with Create / Cancel ──
+    const prev = await tap(555, ADMIN, `nsq:${quiz.id}`, (c) => toAdmin(c) && buttonsOf(c).includes(`nsy:${quiz.id}`));
+    check('nsq: → preview with ✅ Create (nsy:) and ✖ Cancel (cxl)', !!prev.hit && buttonsOf(prev.hit).includes('cxl') && textOf(prev.hit).includes('When AI Gets a Body'),
+      prev.hit ? `${textOf(prev.hit)} ${buttonsOf(prev.hit).join('|')}` : 'no preview');
+    check('nsq: preview creates nothing yet', (await sessionsOfQuiz()).length === 0);
+
+    // ── confirm → session created ──
+    const created = await tap(555, ADMIN, `nsy:${quiz.id}`, (c) => toAdmin(c) && /\d{3} ?\d{3}/.test(textOf(c)) && textOf(c).includes('/join/'));
+    const ans = await tg.tryWaitFor((c) => c.method === 'answerCallbackQuery' && c.params.callback_query_id === created.cbId, W, created.mark);
+    check('nsy: callback answered (answerCallbackQuery)', !!ans);
+    let ses: any = null;
+    await eventually(async () => { ses = (await sessionsOfQuiz())[0] ?? null; return !!ses; }, wired ? 4000 : 500);
+    check('nsy: → session exists (GET /api/sessions as hall1)', !!ses, 'hall1 sees no session for the quiz');
+    const code: string = ses?.code ?? '000000';
+    check('created session: owner mod_hall1, LOBBY, listed', !!ses && ses.moderatorId === 'mod_hall1' && ses.state === 'LOBBY' && ses.listed === true, JSON.stringify(ses));
+    check('created session: label "Hall 1 · 2:40 PM"', ses?.label === 'Hall 1 · 2:40 PM', `label=${JSON.stringify(ses?.label)}`);
+    const rt = created.hit ? textOf(created.hit) : '';
+    check('reply: 6-digit code + join link', !!created.hit && mentionsCode(rt, code) && rt.includes(`${srv.url}/join/${code}`), rt || 'no reply with a code + /join/ link');
+    check('reply: projector + moderator links', rt.includes(`/present/${code}`) && rt.includes(`/mod/room/${code}`), rt);
+    const photo = await tg.tryWaitFor((c) => c.method === 'sendPhoto' && chatOf(c) === ADMIN, W, created.mark);
+    check('QR sent via sendPhoto as a PNG', !!photo && isPng(photo.photo?.bytes), photo ? `file=${photo.photo?.filename} bytes=${photo.photo?.bytes.length}` : 'no sendPhoto to 555');
+    const isNew = (chat: string) => (c: TgCall) => c.method === 'sendMessage' && chatOf(c) === chat && textOf(c).includes('🆕') && mentionsCode(textOf(c), code);
+    const [ng, na] = await Promise.all([tg.tryWaitFor(isNew(GROUP), W, created.mark), tg.tryWaitFor(isNew(ADMIN), W, created.mark)]);
+    check('"🆕" notification → group (hall1 topic 11) and admin 555', !!ng && !!na && threadOf(ng) === HALL1_TOPIC, `group=${!!ng} thread=${ng ? threadOf(ng) : '-'} admin=${!!na}`);
+    check('public list shows the new session', await eventually(async () => (await publicCodes()).includes(code), wired ? 6000 : 500));
+
+    // ── repeat confirm → no second session ──
+    const again = tg.mark();
+    const rep = tg.clickButton(555, ADMIN, `nsy:${quiz.id}`);
+    const repFb = await tg.tryWaitFor(feedback(ADMIN, rep.callback_query.id, /already|expired/i), W, again);
+    check('repeat nsy: → "Already live" / expired', !!repFb, 'no "already"/"expired" feedback');
+    await sleep(500);
+    check('repeat nsy: → still exactly one session', (await sessionsOfQuiz()).length === 1, `${(await sessionsOfQuiz()).length} sessions`);
+
+    // ── two players ──
+    const j1 = await tryJoin(code, 'Dan', 'dan@example.com');
+    const j2 = await tryJoin(code, 'Eve', 'eve@example.com');
+    assert.equal(j1.status, 200, `join Dan: ${JSON.stringify(j1.json)}`);
+    assert.equal(j2.status, 200, `join Eve: ${JSON.stringify(j2.json)}`);
+
+    // ── fabricated confirm (no preview) → expired, nothing happens ──
+    const fab = tg.mark();
+    const fu = tg.clickButton(555, ADMIN, `acy:end:${code}`);
+    const fabFb = await tg.tryWaitFor(feedback(ADMIN, fu.callback_query.id, /expired/i), W, fab);
+    check('fabricated acy:end:<code> → "expired"', !!fabFb, 'no "expired" feedback');
+    await sleep(500);
+    check('fabricated acy:end:<code> → session NOT finished', (await sessionsOfQuiz())[0]?.state === 'LOBBY', `state=${(await sessionsOfQuiz())[0]?.state}`);
+
+    // ── /joining off → confirm → join closed ──
+    const jo = await say(555, ADMIN, `/joining ${code} off`, (c) => toAdmin(c) && buttonsOf(c).includes(`acy:joff:${code}`));
+    check('/joining <code> off → confirm button acy:joff:<code>', !!jo && buttonsOf(jo).includes('cxl'), jo ? buttonsOf(jo).join('|') : 'no confirm');
+    check('/joining off: nothing changes before the tap', (await tryJoin(code, 'Early', 'early@example.com')).status === 200);
+    const joY = await tap(555, ADMIN, `acy:joff:${code}`, toAdmin);
+    check('acy:joff → reply', !!joY.hit);
+    let closed = null as { status: number; json: any } | null;
+    await eventually(async () => { closed = await tryJoin(code, 'Fay', 'fay@example.com'); return closed.status === 403; }, wired ? 3000 : 300);
+    check('after joining off: POST join → 403 join_closed', closed?.status === 403 && closed?.json?.error === 'join_closed', JSON.stringify(closed));
+
+    // ── /joining on ──
+    const jn = await say(555, ADMIN, `/joining ${code} on`, (c) => toAdmin(c) && buttonsOf(c).includes(`acy:jon:${code}`));
+    check('/joining <code> on → confirm button acy:jon:<code>', !!jn);
+    await tap(555, ADMIN, `acy:jon:${code}`, toAdmin);
+    let reopened = null as { status: number; json: any } | null;
+    await eventually(async () => { reopened = await tryJoin(code, 'Gus', 'gus@example.com'); return reopened.status === 200; }, wired ? 3000 : 300);
+    check('after joining on: POST join works again', reopened?.status === 200, JSON.stringify(reopened));
+
+    // ── /hide → unlisted; /show → listed ──
+    const hd = await say(555, ADMIN, `/hide ${code}`, (c) => toAdmin(c) && buttonsOf(c).includes(`acy:hide:${code}`));
+    check('/hide <code> → confirm button acy:hide:<code>', !!hd);
+    await tap(555, ADMIN, `acy:hide:${code}`, toAdmin);
+    check('after hide: GET /api/public/sessions no longer lists it', await eventually(async () => !(await publicCodes()).includes(code), wired ? 6000 : 300));
+    const sh = await say(555, ADMIN, `/show ${code}`, (c) => toAdmin(c) && buttonsOf(c).includes(`acy:show:${code}`));
+    check('/show <code> → confirm button acy:show:<code>', !!sh);
+    await tap(555, ADMIN, `acy:show:${code}`, toAdmin);
+    check('after show: listed again', await eventually(async () => (await publicCodes()).includes(code), wired ? 6000 : 300));
+
+    // ── cancel ──
+    const hd2 = await say(555, ADMIN, `/hide ${code}`, (c) => toAdmin(c) && buttonsOf(c).includes('cxl'));
+    const cx = await tap(555, ADMIN, 'cxl', (c) => toAdmin(c) && /cancel/i.test(textOf(c)));
+    check('cxl → "Cancelled"', !!hd2 && !!cx.hit, cx.hit ? `${cx.hit.method}: ${textOf(cx.hit)}` : 'no "Cancelled"');
+    await sleep(2500);   // past the public-list cache
+    check('cxl → session still listed', (await publicCodes()).includes(code));
+
+    // ── non-admin ──
+    const before = (await sessionsOfQuiz()).length;
+    const nm = tg.mark();
+    tg.userMessage(777, '777', '/newsession');
+    tg.clickButton(777, '777', `nsy:${quiz.id}`);
+    tg.userMessage(777, '777', `/end ${code}`);
+    await sleep(2500);
+    const naLeak = tg.calls.filter((c) => c.seq > nm && isSend(c) && chatOf(c) === '777' && (buttonsOf(c).length > 0 || textOf(c).includes(title) || mentionsCode(textOf(c), code)));
+    check('non-admin 777 /newsession → no quiz buttons, no data', naLeak.length === 0, naLeak.map((c) => `#${c.seq} ${textOf(c)} ${buttonsOf(c).join('|')}`).join('\n'));
+    const afterNa = await sessionsOfQuiz();
+    check('non-admin → no session created or ended', afterNa.length === before && afterNa[0]?.state === 'LOBBY', JSON.stringify(afterNa.map((s) => [s.code, s.state])));
+
+    // ── /end → confirm → FINISHED, 🏁 + CSV ──
+    const en = await say(555, ADMIN, `/end ${code}`, (c) => toAdmin(c) && buttonsOf(c).includes(`acy:end:${code}`));
+    check('/end <code> → confirm button acy:end:<code>', !!en);
+    check('/end: still LOBBY before the tap', (await sessionsOfQuiz())[0]?.state === 'LOBBY');
+    const endY = await tap(555, ADMIN, `acy:end:${code}`, toAdmin);
+    check('acy:end → reply', !!endY.hit);
+    let fin: any = null;
+    await eventually(async () => { fin = (await sessionsOfQuiz())[0]; return fin?.state === 'FINISHED'; }, wired ? 4000 : 300);
+    check('after end: session FINISHED (GET /api/sessions)', fin?.state === 'FINISHED', `state=${fin?.state}`);
+    const isFin = (chat: string) => (c: TgCall) => c.method === 'sendMessage' && chatOf(c) === chat && textOf(c).includes('🏁') && /finished/i.test(textOf(c)) && textOf(c).includes('When AI Gets a Body');
+    const [fg, fa] = await Promise.all([tg.tryWaitFor(isFin(GROUP), W, endY.mark), tg.tryWaitFor(isFin(ADMIN), W, endY.mark)]);
+    check('"🏁 finished" → group (hall1 topic 11) and admin 555', !!fg && !!fa && threadOf(fg) === HALL1_TOPIC, `group=${!!fg} admin=${!!fa}`);
+    const csv = await tg.tryWaitFor((c) => c.method === 'sendDocument' && /\.csv$/i.test(c.document?.filename ?? ''), W, endY.mark);
+    check('CSV → admin 555 after end', !!csv && chatOf(csv) === ADMIN && /dan@example\.com/.test(csv.document?.content ?? ''), csv ? `chat=${chatOf(csv)} file=${csv.document?.filename}` : 'no CSV');
+    const endAgain = await say(555, ADMIN, `/end ${code}`, toAdmin);
+    check('/end on a finished session → no confirm button', !!endAgain && !buttonsOf(endAgain).includes(`acy:end:${code}`), endAgain ? `${textOf(endAgain)} ${buttonsOf(endAgain).join('|')}` : 'no reply');
+
+    // ── invariants ──
+    const leaks = tg.calls.filter((c) => isSend(c) && chatOf(c) === GROUP && visibleOf(c).includes('@'));
+    check('nothing sent to the group contains "@"', leaks.length === 0, leaks.map((c) => `#${c.seq}: ${visibleOf(c)}`).join('\n'));
+    const filesElsewhere = tg.calls.filter((c) => (c.method === 'sendDocument' || c.method === 'sendPhoto') && chatOf(c) !== ADMIN);
+    check('documents and QR photos only go to admin 555', filesElsewhere.length === 0, filesElsewhere.map((c) => `#${c.seq} ${c.method} chat=${chatOf(c)}`).join('\n'));
+    const longData = tg.calls.flatMap((c) => buttonsOf(c)).filter((d) => Buffer.byteLength(d) > 64);
+    check('all callback_data ≤ 64 bytes', longData.length === 0, longData.join('\n'));
+    const unknownMethods = tg.calls.filter((c) => c.status === 404);
+    check('no unknown Bot API methods called', unknownMethods.length === 0, unknownMethods.map((c) => c.method).join(','));
+    const badRequests = tg.calls.filter((c) => c.status === 400);
+    check('no 400 Bad Request from the API', badRequests.length === 0, badRequests.map((c) => `#${c.seq} ${c.method} ${JSON.stringify(c.params).slice(0, 200)}`).join('\n'));
+    check('server never logs player emails', !srv.logs.some((l) => /@example\.com/.test(l)));
+    const h = await (await fetch(`${srv.url}/healthz`)).json();
+    assert.equal(h.ok, true);
+  } finally {
+    await srv.stop();
+    await tg.close();
+  }
+  await report(t, dump(tg, srv));
+});
+
 // ───────────────────────────── 4. fake self-test (always runs, no server) ─────────────────────────────
 test('fakeTelegram: token check, long-poll, multipart, failNext, stop/start', async () => {
   const tg = await startFakeTelegram({ token: '9:xyz' });
@@ -451,6 +649,20 @@ test('fakeTelegram: token check, long-poll, multipart, failNext, stop/start', as
     assert.match(rec.document!.content, /alice@example\.com/);
     assert.equal(rec.params.reply_markup.inline_keyboard[0][0].callback_data, 'lb:123456');
 
+    // multipart sendPhoto keeps raw bytes
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0xff, 0xfe, 0x80]);
+    const fp = new FormData();
+    fp.set('chat_id', '555');
+    fp.set('caption', 'QR');
+    fp.set('photo', new Blob([png], { type: 'image/png' }), 'qr-123456.png');
+    const ph = await (await fetch(`${tg.url}/bot9:xyz/sendPhoto`, { method: 'POST', body: fp })).json();
+    assert.equal(ph.ok, true);
+    const prec = tg.callsOf('sendPhoto')[0];
+    assert.equal(prec.photo?.filename, 'qr-123456.png');
+    assert.ok(prec.photo!.bytes.equals(png), 'photo bytes intact');
+    assert.ok(isPng(prec.photo!.bytes));
+    assert.equal(tg.sent('555').some((c) => c.method === 'sendPhoto'), true);
+
     // failNext 429
     tg.failNext('sendMessage', { code: 429, retry_after: 3 });
     const r429 = await fetch(`${tg.url}/bot9:xyz/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: -1001, text: 'hi', message_thread_id: 11 }) });
@@ -464,7 +676,7 @@ test('fakeTelegram: token check, long-poll, multipart, failNext, stop/start', as
 
     // button click targets the last bot message in that chat
     const cb = tg.clickButton(555, 555, 'lb:123456');
-    assert.equal(cb.callback_query.message.message_id, doc.result.message_id);
+    assert.equal(cb.callback_query.message.message_id, ph.result.message_id);
 
     // outage
     const port = tg.port;

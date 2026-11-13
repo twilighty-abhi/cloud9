@@ -55,6 +55,16 @@ export const createTgClient: CreateTgClient = (cfg: TelegramConfig): TgClient =>
       fd.append('document', new Blob([doc.content], { type: doc.mime ?? 'text/csv' }), doc.filename);
       await request<unknown>('sendDocument', { method: 'POST', body: fd }, DOC_TIMEOUT_MS);
     },
+    async sendPhoto(chatId, photo, opts) {
+      const fd = new FormData();
+      fd.append('chat_id', chatId);
+      if (opts?.threadId != null) fd.append('message_thread_id', String(opts.threadId));
+      if (opts?.caption) { fd.append('caption', opts.caption.slice(0, 1024)); fd.append('parse_mode', 'HTML'); }
+      const rm = inlineKeyboard(opts?.buttons);
+      if (rm) fd.append('reply_markup', JSON.stringify(rm));
+      fd.append('photo', new Blob([new Uint8Array(photo.content)], { type: 'image/png' }), photo.filename);
+      await request<unknown>('sendPhoto', { method: 'POST', body: fd }, DOC_TIMEOUT_MS);
+    },
   };
 };
 

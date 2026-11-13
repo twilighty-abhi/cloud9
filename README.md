@@ -134,6 +134,9 @@ group and private chats, with per-hall forum topics, and answer admin commands l
 and `/export <code>`. It is **off unless `TELEGRAM_BOT_TOKEN` is set**, and Telegram outages never affect the quiz
 (messages wait in an outbox and are sent later). Groups never see player emails.
 
+Admins can also create a session lobby, turn joining on/off, hide/show a session and end it from Telegram, each with a
+confirm tap (starting and running questions stays on the moderator screen).
+
 Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, troubleshooting): **[docs/TELEGRAM.md](docs/TELEGRAM.md)**.
 
 ## Configuration

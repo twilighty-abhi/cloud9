@@ -9,9 +9,10 @@ outbox (in the same SQLite file) and are sent once Telegram is reachable again.
 - [3. Configure](#3-configure)
 - [4. What gets sent where](#4-what-gets-sent-where)
 - [5. Commands and buttons](#5-commands-and-buttons)
-- [6. Privacy](#6-privacy)
-- [7. Troubleshooting](#7-troubleshooting)
-- [8. Turning it off](#8-turning-it-off)
+- [6. Actions (create, joining, hide, end)](#6-actions-create-joining-hide-end)
+- [7. Privacy](#7-privacy)
+- [8. Troubleshooting](#8-troubleshooting)
+- [9. Turning it off](#9-turning-it-off)
 
 ---
 
@@ -82,7 +83,7 @@ Add to `.env` (see the commented block in `.env.example`), then `docker compose 
 | `TELEGRAM_TOPICS` | *(none)* | `hall1=12,hall2=13,admin=15,system=16` | Forum topic id per moderator username, plus `admin` (fallback) and `system`. |
 | `TELEGRAM_DIGEST_MINUTES` | `30` | `0` | Event leaderboard digest every N minutes while a session of that event is live. `0` = off. |
 | `TELEGRAM_NOTIFY_QUESTIONS` | `0` | `1` | One line per closed question (answered / correct counts). Noisy with several halls. |
-| `TELEGRAM_SEND_CSV` | `1` | `0` | Send the results CSV when a session finishes (admin private chats only, see §6). |
+| `TELEGRAM_SEND_CSV` | `1` | `0` | Send the results CSV when a session finishes (admin private chats only, see §7). |
 | `TELEGRAM_API_BASE` | `https://api.telegram.org` | — | Only for tests (points at a fake API). Leave unset. |
 
 A typical event setup:
@@ -143,7 +144,69 @@ Buttons under messages do the same: **Board** / **Quiz board** (session leaderbo
 
 Anyone not in `TELEGRAM_ADMIN_IDS` gets "This bot is private." in a private chat (at most once an hour) and silence in groups.
 
-## 6. Privacy
+## 6. Actions (create, joining, hide, end)
+
+Admins can also **change** a few things from Telegram, so a hall can be set up or wrapped up without a laptop. Same rule as
+the commands: only users in `TELEGRAM_ADMIN_IDS`; everyone else is ignored (or told "This bot is private.").
+
+| Command | What it does |
+|---|---|
+| `/newsession [text]` | Create a session **lobby** for a quiz. Shows the quizzes of the current event as buttons (add text to filter by title; if only one quiz matches, it goes straight to the confirm step). |
+| `/joining <code> on` · `/joining <code> off` | Open or close joining. Players already in the room stay in. |
+| `/hide <code>` · `/show <code>` | Hide the session from the home page, or show it again. With the code, players can still join a hidden session. |
+| `/end <code>` | End the session now. The final leaderboard is posted and the CSV goes to the admins, the same as when the moderator ends it. |
+
+**What you can't do from Telegram:** start the quiz, close or reveal a question, or go to the next question. Those stay on
+the **moderator screen**, where the person running the hall can see the room.
+
+### Every change needs a confirm tap
+
+Nothing changes when you send the command. The bot replies with what will happen and two buttons, **✅ Yes** (or
+**✅ Create**) and **✖ Cancel**. Only the tap does it.
+
+- **✖ Cancel** changes the message to "Cancelled." and does nothing.
+- Confirm buttons **expire after 10 minutes**, and after a server restart. An old button answers "This button expired — run
+  the command again."
+- Each confirm works **once**. Tapping **✅ Create** again answers "Already live: code …" instead of making a second lobby.
+  `/newsession` also warns when the quiz already has a live session.
+- Buttons under a session message (**Close joining**, **End**) take you to the same confirm step.
+
+### Who owns a session created from Telegram
+
+The **hall account that owns the quiz** owns the lobby (for example `hall1`), not the admin who tapped. So it shows up in
+that moderator's dashboard, they run it from their screen as usual, and its notifications go to that hall's topic. The
+notification says who created it (`by telegram:<your user id>`).
+
+The **label** comes from the quiz title when it starts with the hall and a time: a quiz titled
+`Hall 1 · 2:40–3:10 PM · When AI Gets a Body · Sarath` gets the label **Hall 1 · 2:40 PM**. Other titles get no label. The
+session is listed on the home page.
+
+The reply has the code, the **join link** (`/join/<code>`), the **projector link** (`/present/<code>`), the **moderator
+link** (`/mod/room/<code>`), and a **QR code** image to put on screen or forward to the hall.
+
+### Example
+
+```text
+you:  /newsession when ai
+bot:  Create a lobby for Hall 1 · 2:40–3:10 PM · When AI Gets a Body · Sarath?
+      Owner: hall1 · Label: Hall 1 · 2:40 PM · Players can join as soon as it's created.
+      [✅ Create] [✖ Cancel]
+you:  (tap ✅ Create)
+bot:  Done ✓ Lobby created … Code: 924 828 · Join: https://quiz.example.org/join/924828 …   + QR image
+
+you:  /joining 924828 off
+bot:  Close joining for Hall 1 · 2:40–3:10 PM · When AI Gets a Body · Sarath (Hall 1 · 2:40 PM)? 42 players are in.   [✅ Yes] [✖ Cancel]
+you:  (tap ✅ Yes)
+bot:  Done ✓ …
+
+you:  /end 924 828
+bot:  End Hall 1 · 2:40–3:10 PM · When AI Gets a Body · Sarath (Hall 1 · 2:40 PM) now? … The final leaderboard will be posted.   [✅ Yes] [✖ Cancel]
+```
+
+The actions work in a private chat with the bot and in the group. In the group, everyone in the chat sees the confirm
+message, but only admins' taps count.
+
+## 7. Privacy
 
 - **Groups never see emails.** Notifications and group command replies show player names and scores only. Even a name that
   looks like an email is masked.
@@ -153,7 +216,7 @@ Anyone not in `TELEGRAM_ADMIN_IDS` gets "This bot is private." in a private chat
 - The bot's log lines don't include player emails (the e2e test checks this).
 - Telegram keeps messages on its servers. After the event, delete CSVs from chats if your data policy needs it.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 Logs: `docker compose logs -f app | grep -i telegram`. In a private chat, `/stats` shows the outbox and the last error.
 
@@ -171,7 +234,7 @@ Logs: `docker compose logs -f app | grep -i telegram`. In a private chat, `/stat
 | `429 Too Many Requests` in logs | Telegram rate limit; Cloud 9 waits the time Telegram asks for and continues. |
 | Telegram down / server offline | The quiz keeps running. Messages stay in the outbox and are sent when it's back (up to 24 h old). |
 
-## 8. Turning it off
+## 9. Turning it off
 
 Remove or comment out `TELEGRAM_BOT_TOKEN` in `.env`, then `docker compose up -d`. With no token the server makes no
 Telegram calls at all. The other `TELEGRAM_*` variables can stay.
@@ -186,4 +249,5 @@ remove it.
 
 `npm test` includes `server/test/telegram-e2e.test.ts`. It runs the real server against a fake Bot API
 (`server/test/fakeTelegram.ts`), plays a 3-player game and checks routing, privacy, commands, buttons, the token-unset case
-and outbox delivery after an outage. `TG_E2E_WAIT_MS` changes how long each Telegram expectation waits (default 12000).
+and outbox delivery after an outage. A separate test drives the admin actions (`/newsession`, `/joining`, `/hide`, `/show`,
+`/end`, confirm taps, expired and repeated buttons, non-admins) and checks the result through the HTTP API. `TG_E2E_WAIT_MS` changes how long each Telegram expectation waits (default 12000).

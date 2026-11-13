@@ -84,6 +84,17 @@ export class FakeRegistry implements GameRegistry {
     this.repo.updateSession(r.summary.id, patch);
     return { ...r.summary };
   }
+  endSessionCalls: { code: string; actor: string | null }[] = [];
+  endSession(code: string, actor: string | null): { ok: true } | { ok: false; error: 'not_found' | 'finished' } {
+    this.endSessionCalls.push({ code, actor });
+    const r = this.rooms.get(code);
+    if (!r) return { ok: false, error: 'not_found' };
+    if (r.summary.state === 'FINISHED') return { ok: false, error: 'finished' };
+    r.summary.state = 'FINISHED';
+    r.summary.endedAt = Date.now();
+    this.repo.updateSession(r.summary.id, { state: 'FINISHED', endedAt: r.summary.endedAt });
+    return { ok: true };
+  }
   ownerOf(code: string) { return this.rooms.get(code)?.summary.moderatorId ?? null; }
   restore() { return 0; }
   stats() { return { rooms: this.rooms.size, sockets: 0 }; }
