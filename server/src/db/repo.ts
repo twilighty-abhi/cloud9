@@ -201,6 +201,7 @@ export function openRepo(dbPath: string): Repo {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     listAnswers: db.prepare(`SELECT * FROM answers WHERE session_id = ? ORDER BY q_index, answered_at`),
+    setPlayerScore: db.prepare(`UPDATE players SET score = ? WHERE id = ?`),
   };
 
   const updateCache = new Map<string, Database.Statement>();
@@ -224,13 +225,22 @@ export function openRepo(dbPath: string): Repo {
     });
   });
 
-  // ── answer queue ──
+  // ── answers ──
+  // Hot path: the answer row and the player's new score are written in ONE synchronous transaction, so a hard crash
+  // (SIGKILL / OOM) can never leave a score that counts an answer with no stored row (or the reverse).
+  const recordAnswerTx = db.transaction((a: AnswerRow, playerId: string, newScore: number | null) => {
+    insertAnswerRow(a);
+    if (newScore !== null) st.setPlayerScore.run(newScore, playerId);
+  });
+  function insertAnswerRow(a: AnswerRow): void {
+    st.insertAnswer.run(a.sessionId, a.playerId, a.questionId, a.qIndex, a.choice, b2i(a.correct), Math.round(a.responseMs), Math.round(a.points), a.answeredAt);
+  }
+
+  // Fallback queue (only used when recordAnswer fails, and by legacy callers): flushed in one transaction every 100 ms.
   let queue: AnswerRow[] = [];
   let closed = false;
   const flushTx = db.transaction((rows: AnswerRow[]) => {
-    for (const a of rows) {
-      st.insertAnswer.run(a.sessionId, a.playerId, a.questionId, a.qIndex, a.choice, b2i(a.correct), Math.round(a.responseMs), Math.round(a.points), a.answeredAt);
-    }
+    for (const a of rows) insertAnswerRow(a);
   });
   function flush(): void {
     if (queue.length === 0 || closed) return;
@@ -375,6 +385,11 @@ export function openRepo(dbPath: string): Repo {
 
     countPlayers(sessionId) {
       return (st.countPlayers.get(sessionId) as Row).n as number;
+    },
+
+    recordAnswer(a, playerId, newScore) {
+      if (closed) throw new Error('repo closed');
+      recordAnswerTx(a, playerId, newScore);
     },
 
     queueAnswer(a) {

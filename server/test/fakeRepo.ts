@@ -76,6 +76,10 @@ export class FakeRepo implements Repo {
   listPlayers(sessionId: string) { return [...this.players.values()].filter((p) => p.sessionId === sessionId).sort((a, b) => a.joinedAt - b.joinedAt).map((p) => ({ ...p })); }
   countPlayers(sessionId: string) { return this.listPlayers(sessionId).filter((p) => !p.kicked).length; }
 
+  recordAnswer(a: AnswerRow, playerId: string, newScore: number | null) {
+    if (!this.answers.some((x) => x.sessionId === a.sessionId && x.playerId === a.playerId && x.questionId === a.questionId)) this.answers.push({ ...a });
+    if (newScore !== null) this.updatePlayer(playerId, { score: newScore });
+  }
   queueAnswer(a: AnswerRow) { this.queue.push({ ...a }); }
   listAnswers(sessionId: string) { this.flush(); return this.answers.filter((a) => a.sessionId === sessionId).map((a) => ({ ...a })); }
   flush() {
