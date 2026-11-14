@@ -8,6 +8,7 @@ import { openRepo } from './db/repo';
 import { createAuth } from './auth/index';
 import { createGame } from './game/index';
 import { registerRoutes } from './http/index';
+import { registerSecurityHeaders } from './http/security';
 import { startTelegram } from './notify/index';
 
 async function main() {
@@ -20,6 +21,7 @@ async function main() {
   const restored = game.registry.restore();
 
   const app = Fastify({ trustProxy: (_addr: string, hop: number) => hop < 1, bodyLimit: 2_000_000, logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
+  registerSecurityHeaders(app, { publicUrl: config.publicUrl });
 
   app.get('/healthz', async () => {
     const s = game.registry.stats();
