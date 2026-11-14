@@ -568,3 +568,32 @@ test('events: quizzes eventId filter + invalid_event, sessions carry event, lead
     await t.close();
   }
 });
+
+test('play lookup: failed lookups are rate-limited per IP; valid lookups do not count', async () => {
+  process.env.PLAY_LOOKUP_RATE_PER_MIN = '5';
+  const t = await setup();
+  delete process.env.PLAY_LOOKUP_RATE_PER_MIN;
+  try {
+    await t.login('alice', 'pw-alice');
+    const quiz = (await t.req('POST', '/api/quizzes', 'alice', sampleQuiz())).json();
+    const live: string = (await t.req('POST', '/api/sessions', 'alice', { quizId: quiz.id })).json().code;
+    const get = (code: string, ip: string) => t.req('GET', `/api/play/${code}`, undefined, undefined, ip);
+
+    // A venue NAT: many valid lookups from one IP are never limited.
+    for (let i = 0; i < 50; i++) assert.equal((await get(live, '203.0.113.7')).statusCode, 200);
+
+    // Unknown + malformed codes count as failures; after 5 the IP gets 429 for everything.
+    for (let i = 0; i < 4; i++) assert.equal((await get(String(900100 + i), '198.51.100.9')).statusCode, 404);
+    assert.equal((await get('abc', '198.51.100.9')).statusCode, 404);
+    const rl = await get(live, '198.51.100.9');
+    assert.equal(rl.statusCode, 429);
+    assert.equal(rl.json().error, 'rate_limited');
+    assert.equal((await get('999999', '198.51.100.9')).statusCode, 429);
+
+    // Other IPs (and the NAT above) are unaffected.
+    assert.equal((await get(live, '203.0.113.7')).statusCode, 200);
+    assert.equal((await get('999999', '192.0.2.1')).statusCode, 404);
+  } finally {
+    await t.close();
+  }
+});

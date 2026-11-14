@@ -7,6 +7,7 @@ import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListIte
 import type { RegisterRoutes, RouteDeps, SessionRow } from '../contracts';
 import { COOKIE_NAME, SESSION_TTL_MS } from '../auth/index';
 import { createRateLimiter } from '../util/rateLimit';
+import { createFailureLimiter } from '../util/failureLimiter';
 import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
 import { buildExportCsv } from './exportCsv';
@@ -94,6 +95,8 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   const joinUrl = (code: string) => `${config.publicUrl}/join/${code}`;
   const joinLimiter = createRateLimiter({ max: envInt('JOIN_RATE_PER_MIN', 1000), windowMs: 60_000 });
   const loginLimiter = createRateLimiter({ max: envInt('LOGIN_RATE_PER_MIN', 5), windowMs: 60_000 });
+  // Only failed lookups (unknown/invalid code) count, so a venue NAT loading real rooms never hits it.
+  const playLookupLimiter = createFailureLimiter({ max: envInt('PLAY_LOOKUP_RATE_PER_MIN', 600), windowMs: 60_000 });
 
   api.setErrorHandler((err: any, req, reply) => {
     if (err instanceof HttpError) return reply.code(err.status).send({ error: err.code, message: err.message });
@@ -484,8 +487,13 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   });
 
   api.get('/api/play/:code', async (req, reply) => {
-    const code = codeParam(req);
-    const info = registry.playInfo(code) ?? fail(404, 'not_found', 'Room not found');
+    if (playLookupLimiter.blocked(req.ip)) fail(429, 'rate_limited', 'Too many room lookups, please wait a minute');
+    const code = String((req.params as { code?: string }).code ?? '');
+    const info = CODE_RE.test(code) ? registry.playInfo(code) : null;
+    if (!info) {
+      playLookupLimiter.fail(req.ip);
+      fail(404, 'not_found', 'Room not found');
+    }
     reply.header('cache-control', 'no-store');
     return info;
   });
