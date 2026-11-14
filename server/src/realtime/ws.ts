@@ -29,10 +29,54 @@ interface Ctx {
 
 export interface Realtime { close(): void }
 
-export function attachRealtime(server: Server, auth: AuthService, registry: Registry, opts: { heartbeatMs?: number } = {}): Realtime {
+export interface RealtimeOptions {
+  heartbeatMs?: number;
+  /** PUBLIC_URL; its origin is always allowed for moderator sockets. */
+  publicUrl?: string;
+  /** Extra allowed Origins for moderator sockets (default: env ALLOWED_ORIGINS, comma-separated). */
+  allowedOrigins?: string[];
+}
+
+const normOrigin = (o: string): string | null => {
+  try {
+    const u = new URL(o.trim());
+    return u.origin === 'null' ? null : u.origin.toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Origin policy for role=mod upgrades (cross-site WebSocket hijacking protection; the cookie is still required).
+ * Allowed: PUBLIC_URL's origin, ALLOWED_ORIGINS, or an Origin whose host equals the request's Host header
+ * (same-origin page; e.g. the Vite dev proxy). No Origin header (non-browser client) → allowed, logged.
+ */
+export function makeModOriginCheck(publicUrl: string | undefined, extra: string[]): (req: IncomingMessage) => 'ok' | 'missing' | 'mismatch' {
+  const allowed = new Set<string>();
+  for (const o of [publicUrl ?? '', ...extra]) {
+    const n = o ? normOrigin(o) : null;
+    if (n) allowed.add(n);
+  }
+  return (req) => {
+    const raw = req.headers.origin;
+    if (raw === undefined || raw === '') return 'missing';
+    const origin = normOrigin(raw);
+    if (!origin) return 'mismatch';
+    if (allowed.has(origin)) return 'ok';
+    const host = (req.headers.host ?? '').toLowerCase();
+    if (host && new URL(origin).host === host) return 'ok';
+    return 'mismatch';
+  };
+}
+
+export function attachRealtime(server: Server, auth: AuthService, registry: Registry, opts: RealtimeOptions = {}): Realtime {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_PAYLOAD, clientTracking: false });
   const live = new Set<Ctx>();
   let shuttingDown = false;
+  const modOrigin = makeModOriginCheck(
+    opts.publicUrl,
+    opts.allowedOrigins ?? (process.env.ALLOWED_ORIGINS ?? '').split(',').map((x) => x.trim()).filter(Boolean),
+  );
 
   wss.on('error', (e) => console.error('[ws] server error', e));
 
@@ -93,6 +137,14 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
         return;
       }
     } else if (role === 'mod') {
+      const originCheck = modOrigin(req);
+      if (originCheck === 'mismatch') {
+        console.warn(`[ws] moderator socket rejected: Origin ${JSON.stringify(String(req.headers.origin).slice(0, 200))} not allowed (set ALLOWED_ORIGINS)`);
+        sendError(ws, 'unauthorized', 'Origin not allowed');
+        safeClose(ws, WS_CLOSE.UNAUTHORIZED, 'bad_origin');
+        return;
+      }
+      if (originCheck === 'missing') console.warn('[ws] moderator socket without Origin header (non-browser client); cookie check only');
       const me = auth.moderatorFromCookieHeader(req.headers.cookie);
       if (!me || (me.id !== room.moderatorId && !me.isSuper)) {
         sendError(ws, 'unauthorized', 'Not a moderator of this room');
