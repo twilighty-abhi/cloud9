@@ -143,4 +143,9 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
-`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
+`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container.
+
+**Moderator sessions** are signed cookies valid for 24 h (logout only clears the browser's copy). To revoke all of them
+(lost laptop, leaked cookie): set `SESSION_NOT_BEFORE=$(date +%s)` (or an ISO time) in `.env` and
+`docker compose up -d` — every cookie issued before that moment is rejected and moderators log in again. Rotating
+`SESSION_SECRET` (`openssl rand -hex 32`) and restarting does the same. A future value is treated as "now". Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
