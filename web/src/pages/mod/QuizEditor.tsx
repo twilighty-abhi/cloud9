@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Me, QuizInput } from '../../../../shared/api';
 import type { QuizDef, EmailMode, ScoringMode } from '../../../../shared/model';
 import { DEFAULTS } from '../../../../shared/model';
-import { navigate } from '../../lib/router';
+import { navigate, addNavGuard } from '../../lib/router';
 import { load, mutate, errMsg, apiErrMsg, ModHeader, LETTERS, fixture, param, useEvents, EventSelect, EmailModeField } from './common';
 
 interface QDraft { key: number; text: string; imageUrl: string; options: string[]; correctIndex: number; timeLimitSec: string; pointsMax: number }
@@ -68,6 +68,14 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
   }, []);
+
+  // In-app navigation (logo, Log out, any Link, browser Back) asks before discarding edits.
+  useEffect(() => addNavGuard(() => {
+    if (!dirtyRef.current) return true;
+    if (!confirm('You have unsaved changes. Leave without saving?')) return false;
+    dirtyRef.current = false; // don't ask twice for the same navigation
+    return true;
+  }), []);
 
   const update = (fn: (d: Draft) => Draft) => { setDraft((d) => (d ? fn(d) : d)); setDirty(true); setSaved(false); };
   const updQ = (i: number, patch: Partial<QDraft>) => update((d) => ({ ...d, questions: d.questions.map((q, j) => (j === i ? { ...q, ...patch } : q)) }));

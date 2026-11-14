@@ -3,7 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import type { RoomState, EventListItem, EmailMode } from '../../../../shared/model';
 import { get, api, HttpError } from '../../lib/api';
-import { query, linkClick } from '../../lib/router';
+import { query, linkClick, confirmLeave } from '../../lib/router';
 import { fixtureGet, fakeQr, fxMe, fixtureParam } from '../../dev/modFixtures';
 import { Brand } from '../../lib/brand';
 
@@ -117,6 +117,7 @@ export const fmtNum = (n: number) => n.toLocaleString('en-IN');
 /** Top bar for dashboard/editor/import. */
 export function ModHeader(props: { me: { displayName: string }; onLogout: () => void }) {
   const logout = async () => {
+    if (!confirmLeave()) return; // e.g. unsaved quiz edits
     try { await mutate('POST', '/api/auth/logout'); } catch { /* ignore */ }
     props.onLogout();
   };
