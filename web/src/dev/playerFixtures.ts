@@ -60,12 +60,25 @@ function question(remainingMs: number) {
   };
 }
 
+// 16:9 placeholder image for the small-phone layout fixture (#16).
+const IMG_16x9 = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900"><rect width="1600" height="900" fill="#B9AEFF"/><circle cx="800" cy="450" r="240" fill="#7EE8C4"/></svg>');
+function longImageQuestion(remainingMs: number) {
+  return {
+    ...question(remainingMs),
+    text: 'In a Kubernetes cluster running on Google Kubernetes Engine, which object would you create to expose a set of pods behind a single stable internal IP address and DNS name, load-balancing traffic across them?',
+    imageUrl: IMG_16x9,
+    options: ['A Service (ClusterIP)', 'A PersistentVolumeClaim', 'A DaemonSet', 'A ConfigMap in every pod'],
+  };
+}
+
 export function playerFixture(name: string): PlayerSnapshot | null {
   const b = base();
   switch (name) {
     case 'lobby': return b;
     case 'question': return { ...b, state: 'QUESTION', me: { ...b.me, score: 1730, rank: 6 }, question: question(12400) };
     case 'question-locked': return { ...b, state: 'QUESTION', me: { ...b.me, score: 1730, rank: 6 }, question: question(8200), myAnswer: { choice: 0 } };
+    case 'question-long-image': return { ...b, state: 'QUESTION', me: { ...b.me, score: 1730, rank: 6 }, question: longImageQuestion(12400) };
+    case 'question-long-image-locked': return { ...b, state: 'QUESTION', me: { ...b.me, score: 1730, rank: 6 }, question: longImageQuestion(8200), myAnswer: { choice: 0 } };
     case 'question-timeup': return { ...b, state: 'QUESTION', me: { ...b.me, score: 1730, rank: 6 }, question: question(-50) };
     case 'closed': return { ...b, state: 'CLOSED', me: { ...b.me, score: 1730, rank: 6 }, question: question(-2000), myAnswer: { choice: 0 } };
     case 'reveal-correct': return { ...b, state: 'REVEAL', me: { ...b.me, score: 2580, rank: 4 }, question: question(-5000), myAnswer: { choice: 0 }, reveal: { correctIndex: 0, correct: true, points: 850 } };

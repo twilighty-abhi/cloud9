@@ -69,7 +69,12 @@
 .c9-p-q__bar > span { transform-origin: left center; transition: transform 200ms linear; will-change: transform; }
 .c9-p-q__bar--urgent > span { background: var(--yy-danger-solid); }
 .c9-p-q__text { font-size: 26px; line-height: 1.18; letter-spacing: -0.02em; overflow-wrap: anywhere; margin: var(--space-2) 0; }
-.c9-p-q__img { max-height: 30vh; width: auto; max-width: 100%; margin: 0 auto; border-radius: var(--radius-lg); border: 1px solid var(--yy-border); object-fit: contain; }
+.c9-p-q__img { max-height: 22vh; width: auto; max-width: 100%; margin: 0 auto; border-radius: var(--radius-lg); border: 1px solid var(--yy-border); object-fit: contain; }
+/* Small phones (#16): timer row stays visible while scrolling; long text scales down; compact answers on short screens. */
+.c9-p-q__head { position: sticky; top: calc(57px + env(safe-area-inset-top)); z-index: 5; display: flex; flex-direction: column; gap: var(--space-4);
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-4)) 0; padding: var(--space-2) var(--space-4); background: var(--yy-bg-canvas); }
+.c9-p-q__text--long { font-size: clamp(20px, 5.6vw, 24px); line-height: 1.2; margin: 0; }
+.c9-p-q__text--xlong { font-size: clamp(18px, 5vw, 22px); line-height: 1.2; letter-spacing: -0.01em; margin: 0; }
 
 .c9-p-opts { display: flex; flex-direction: column; gap: 10px; }
 .c9-p-opt { --opt: var(--c9-opt-0); display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 14px 16px 14px 14px;
@@ -168,6 +173,20 @@
 .c9-p-fin__end { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); padding-top: var(--space-4); }
 .c9-p-fin__thanks { font-size: 26px; }
 
+/* Short screens (#16): compact question layout so all four answers fit above the fold. Kept after the base rules so it wins. */
+@media (max-height: 740px) {
+  .c9-p-main { padding-top: var(--space-3); }
+  .c9-p-q { gap: var(--space-3); }
+  .c9-p-q__head { gap: var(--space-3); }
+  .c9-p-q__text { font-size: 22px; margin: 0; }
+  .c9-p-q__text--long { font-size: clamp(18px, 5vw, 21px); }
+  .c9-p-q__text--xlong { font-size: clamp(16px, 4.5vw, 19px); line-height: 1.18; }
+  .c9-p-q__img { max-height: 18vh; }
+  .c9-p-opts { gap: 8px; }
+  .c9-p-opt { min-height: 54px; padding: 8px 14px 8px 10px; font-size: 17px; gap: 12px; }
+  .c9-p-opt__key { width: 34px; height: 34px; font-size: 18px; border-radius: 10px; }
+  .c9-p-locked { padding: 10px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .c9-p-breathe__ring, .c9-p-screen, .c9-p-pop { animation: none; }
   .c9-p-q__bar > span { transition: none; }
