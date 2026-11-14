@@ -551,14 +551,14 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     assert.equal(lb2.eventBoard.top[0].name, 'Ali'); // most recent join's name
     assert.equal(lb2.eventBoard.top[0].score, 2000);
     const lbe = await qe.state('LEADERBOARD');
-    assert.equal(lbe.eventBoard.me.rank, 5); // 0 points, joined last
+    assert.equal(lbe.eventBoard.me.rank, 4); // 0 points, tied with carol (competition ranking)
     const p2 = await pres2.state('LEADERBOARD');
     assert.equal(p2.eventBoard.top.length, 5);
     assert.equal(p2.eventBoard.total, 5);
 
     const board = repo.eventLeaderboard('ev1');
     assert.deepEqual(board.map((e) => [e.key, e.score, e.quizzesPlayed, e.rank]), [
-      ['alice@x.test', 2000, 2, 1], ['bob@x.test', 1000, 1, 2], ['frank@x.test', 1000, 1, 3], ['carol@x.test', 0, 1, 4], ['eve@x.test', 0, 1, 5],
+      ['alice@x.test', 2000, 2, 1], ['bob@x.test', 1000, 1, 2], ['frank@x.test', 1000, 1, 2], ['carol@x.test', 0, 1, 4], ['eve@x.test', 0, 1, 4],
     ]);
 
     // emails never reach players or the projector
@@ -589,6 +589,62 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     clients.forEach((c) => c.close());
     await teardown();
     repo.close();
+  }
+});
+
+test('ties: competition ranking (1,2,2,4) for quiz leaderboard and me.rank; join order only orders rows', async () => {
+  const { registry, teardown } = await setup();
+  try {
+    const s = registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: false });
+    const room = registry.get(s.code)!;
+    const ids = ['A', 'B', 'C', 'D', 'E'].map((n) => { const r = registry.join(s.code, { name: n }); assert.ok(r.ok); return r.ok ? r.playerId : ''; });
+    const [a, b, c, d, e] = ids.map((id) => room.players.get(id)!);
+    // lobby: no ranks
+    assert.equal(room.playerSnapshot(a).me.rank, null);
+    room.modAction('start', -1);
+    const t0 = room.qStartedAt!;
+    assert.ok(room.answer(a, 0, 1, t0 + 1000).ok);  // fastest correct
+    assert.ok(room.answer(b, 0, 1, t0 + 3000).ok);  // B and C: same score, same time → shared rank
+    assert.ok(room.answer(c, 0, 1, t0 + 3000).ok);
+    assert.ok(room.answer(d, 0, 0, t0 + 2000).ok);  // wrong → 0
+    // E does not answer → 0 (same tie-break time 0 as D)
+    if (room.state === 'QUESTION') room.modAction('close', 0);
+    room.modAction('reveal', 0);
+    room.modAction('leaderboard', 0);
+    const lb = room.hostSnapshot('mod').leaderboard;
+    assert.deepEqual(lb.map((x) => [x.name, x.rank]), [['A', 1], ['B', 2], ['C', 2], ['D', 4], ['E', 4]]);
+    assert.deepEqual([a, b, c, d, e].map((p) => room.playerSnapshot(p).me.rank), [1, 2, 2, 4, 4]);
+    // second question: B and C stay tied (identical score and time); A drops behind them
+    room.modAction('next', 0);
+    const t1 = room.qStartedAt!;
+    assert.ok(room.answer(b, 1, 2, t1 + 500).ok);
+    assert.ok(room.answer(c, 1, 2, t1 + 500).ok);
+    if (room.state === 'QUESTION') room.modAction('close', 1);
+    room.modAction('reveal', 1);
+    const lb2 = room.hostSnapshot('mod').leaderboard;
+    const ranks = new Map(lb2.map((x) => [x.name, x.rank]));
+    assert.equal(ranks.get('B'), ranks.get('C')); // still identical score + time
+    assert.equal(ranks.get('D'), 4);
+    assert.equal(ranks.get('E'), 4);
+    // flat scoring: equal score but different tie-break time → different ranks (faster first)
+    const s3 = registry.createSession({ quiz: { ...makeQuiz(), scoring: 'flat' }, moderatorId: 'mod1', event: null, label: '', listed: false });
+    const r3 = registry.get(s3.code)!;
+    const [f1, f2, f3] = ['F1', 'F2', 'F3'].map((n) => { const r = registry.join(s3.code, { name: n }); return r3.players.get(r.ok ? r.playerId : '')!; });
+    r3.modAction('start', -1);
+    const t3 = r3.qStartedAt!;
+    assert.ok(r3.answer(f2, 0, 1, t3 + 4000).ok);
+    assert.ok(r3.answer(f1, 0, 1, t3 + 2000).ok);
+    assert.ok(r3.answer(f3, 0, 1, t3 + 4000).ok);
+    r3.modAction('end', 0);
+    assert.deepEqual(r3.hostSnapshot('mod').leaderboard.map((x) => [x.name, x.score, x.rank]), [['F1', 1000, 1], ['F2', 1000, 2], ['F3', 1000, 2]]);
+    // all-zero room: everyone shares rank 1
+    const s2 = registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: false });
+    const r2 = registry.get(s2.code)!;
+    ['X', 'Y', 'Z'].forEach((n) => registry.join(s2.code, { name: n }));
+    r2.modAction('end', -1);
+    assert.deepEqual(r2.hostSnapshot('mod').leaderboard.map((x) => x.rank), [1, 1, 1]);
+  } finally {
+    await teardown();
   }
 });
 

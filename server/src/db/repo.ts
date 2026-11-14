@@ -288,15 +288,20 @@ export function openRepo(dbPath: string): Repo {
 
     eventLeaderboard(eventId) {
       const rows = st.eventLeaderboard.all(eventId) as Row[];
+      // Competition ranking (1, 2, 2, 4): equal score → equal rank. first_join / key only order the rows.
+      let rank = 0;
+      let prevScore: number | null = null;
       return rows.map((r, i): EventLeaderEntry => {
         const key = r.k as string;
+        const score = r.score ?? 0;
+        if (score !== prevScore) { rank = i + 1; prevScore = score; }
         return {
           key,
           name: r.last_name as string,
           email: key.includes('@') ? key : null, // "p:<uuid>" never contains '@'; every accepted email does
-          score: r.score ?? 0,
+          score,
           quizzesPlayed: r.qp,
-          rank: i + 1,
+          rank,
         };
       });
     },

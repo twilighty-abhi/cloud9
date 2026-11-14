@@ -205,7 +205,7 @@ function Reveal({ snap }: { snap: PlayerSnapshot }) {
 
 type TopRow = { key: string; name: string; score: number; rank: number; me: boolean };
 
-/** Compact top-3 board: medal rows + a "You're #N" footer when I'm not in the top 3. */
+/** Compact top-3 board: medal rows (no medal colour for 0 points) + a "You're #N" footer when I'm not in the top 3. */
 function TopBoard({ title, rows, footer, emptyText }: { title: string; rows: TopRow[]; footer: ComponentChildren | null; emptyText: string }) {
   return (
     <section class="c9-p-top" aria-label={title}>
@@ -214,7 +214,7 @@ function TopBoard({ title, rows, footer, emptyText }: { title: string; rows: Top
         <ol class="c9-p-top__list">
           {rows.map((r) => (
             <li key={r.key} class={`c9-p-top__row ${r.me ? 'is-me' : ''}`}>
-              <span class={`c9-p-medal c9-p-medal--${r.rank}`} aria-label={`Rank ${r.rank}`}>{r.rank}</span>
+              <span class={`c9-p-medal ${r.score > 0 ? `c9-p-medal--${r.rank}` : ''}`} aria-label={`Rank ${r.rank}`}>{r.rank}</span>
               <span class="c9-p-top__name">{r.name}{r.me && <span class="c9-p-you">You</span>}</span>
               <span class="c9-p-top__score">{fmtNum(r.score)}</span>
             </li>
@@ -241,7 +241,11 @@ function EventTop({ snap }: { snap: PlayerSnapshot }) {
   const ev = snap.eventBoard;
   if (!ev) return null;
   const me = ev.me;
-  const rows: TopRow[] = ev.top.slice(0, 3).map((e) => ({ key: `${e.rank}-${e.name}`, name: e.name, score: e.score, rank: e.rank, me: !!me && me.rank === e.rank }));
+  // Ranks can be shared (ties), so "me" also needs the name (the event board shows my most recent join's name).
+  const rows: TopRow[] = ev.top.slice(0, 3).map((e, i) => ({
+    key: `${i}-${e.name}`, name: e.name, score: e.score, rank: e.rank,
+    me: !!me && me.rank === e.rank && me.score === e.score && e.name === snap.me.name,
+  }));
   const footer = me
     ? <>You're <strong>#{me.rank}</strong> of {fmtNum(ev.total)} in {ev.eventName} <span class="c9-nw">· {fmtNum(me.score)} pts</span></>
     : null;

@@ -208,13 +208,22 @@ export class Room {
       list.push({ p, score: this.displayScore(p), ms });
     }
     list.sort((a, b) => b.score - a.score || a.ms - b.ms || a.p.joinedAt - b.p.joinedAt);
+    // Competition ranking (1, 2, 2, 4): equal score AND equal tie-break time share a rank; join order only orders the rows.
+    const rankOf = new Map<string, number>();
+    for (let i = 0; i < list.length; i++) {
+      const prev = list[i - 1];
+      const r = list[i];
+      rankOf.set(r.p.id, prev && prev.score === r.score && prev.ms === r.ms ? rankOf.get(prev.p.id)! : i + 1);
+    }
     this.ranking = list;
-    this.rankOf = new Map(list.map((r, i) => [r.p.id, i + 1]));
+    this.rankOf = rankOf;
     return list;
   }
 
   private leaderboard(): LeaderEntry[] {
-    return this.getRanking().slice(0, DEFAULTS.leaderboardSize).map((r, i) => ({ playerId: r.p.id, name: r.p.name, score: r.score, rank: i + 1 }));
+    const list = this.getRanking();
+    const rankOf = this.rankOf!;
+    return list.slice(0, DEFAULTS.leaderboardSize).map((r) => ({ playerId: r.p.id, name: r.p.name, score: r.score, rank: rankOf.get(r.p.id)! }));
   }
 
   private rankFor(id: string): number | null {

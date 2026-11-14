@@ -77,7 +77,7 @@ export interface LeaderEntry {
   playerId: string;
   name: string;
   score: number;
-  rank: number;             // 1-based, ties share order by tie-break (no shared ranks)
+  rank: number;             // 1-based competition rank (1,2,2,4): equal score AND equal tie-break time share a rank; join order only orders rows
 }
 
 // ───────────────────────────── events ─────────────────────────────
@@ -109,7 +109,7 @@ export interface EventLeaderEntry {
   email: string | null;     // ONLY in moderator responses; null/omitted in public + player views
   score: number;
   quizzesPlayed: number;    // distinct sessions
-  rank: number;             // 1-based; tie-break: score desc, then first join asc
+  rank: number;             // 1-based competition rank (1,2,2,4): equal score share a rank; rows ordered score desc, then first join asc
 }
 
 /** Compact leaderboard shown inside rooms. */

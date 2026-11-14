@@ -208,7 +208,7 @@ function DualBoard({ snap, ev }: { snap: HostSnapshot; ev: NonNullable<HostSnaps
 
 function Row({ x }: { x: RowLike }) {
   return (
-    <li class={`c9-pr-lb__row ${x.rank <= 3 ? `is-r${x.rank}` : ''}`}>
+    <li class={`c9-pr-lb__row ${x.rank <= 3 && x.score > 0 ? `is-r${x.rank}` : ''}`}>
       <span class="c9-pr-lb__rank">{x.rank}</span>
       <span class="c9-pr-lb__name">{x.name}</span>
       <span class="c9-pr-lb__score">{fmtNum(x.score)}</span>
@@ -217,8 +217,9 @@ function Row({ x }: { x: RowLike }) {
 }
 
 function Podium({ entries, players }: { entries: LeaderEntry[]; players: number }) {
-  const top = entries.slice(0, 3);
-  const rest = entries.slice(3, 10);
+  // Only players who scored stand on the podium; 0-point players are listed below it.
+  const top = entries.slice(0, 3).filter((x) => x.score > 0);
+  const rest = entries.slice(top.length, 10);
   const order = [top[1], top[0], top[2]].filter(Boolean) as LeaderEntry[];
   return (
     <main class="c9-pr-final">
@@ -229,7 +230,7 @@ function Podium({ entries, players }: { entries: LeaderEntry[]; players: number 
       {top.length === 0 ? <p class="c9-pr-over">No scores this time.</p> : (
         <div class="c9-pr-podium">
           {order.map((x) => (
-            <div class={`c9-pr-podium__col is-r${x.rank}`}>
+            <div key={x.playerId} class={`c9-pr-podium__col is-r${x.rank}`}>
               <div class="c9-pr-podium__name">{x.name}</div>
               <div class="c9-pr-podium__score">{fmtNum(x.score)}</div>
               <div class="c9-pr-podium__block"><span>{x.rank}</span></div>
@@ -239,7 +240,7 @@ function Podium({ entries, players }: { entries: LeaderEntry[]; players: number 
       )}
       {rest.length > 0 && (
         <ol class="c9-pr-rest">
-          {rest.map((x) => <li><span class="c9-pr-rest__rank">{x.rank}</span><span class="c9-pr-rest__name">{x.name}</span><span class="c9-pr-rest__score">{fmtNum(x.score)}</span></li>)}
+          {rest.map((x) => <li key={x.playerId}><span class="c9-pr-rest__rank">{x.rank}</span><span class="c9-pr-rest__name">{x.name}</span><span class="c9-pr-rest__score">{fmtNum(x.score)}</span></li>)}
         </ol>
       )}
     </main>

@@ -83,8 +83,9 @@ export function PresentEvent(props: { id: string }) {
   }
 
   const top = board.top.slice(0, 10);
-  const podium = top.slice(0, 3);
-  const rest = top.slice(3);
+  // Only players who scored stand on the podium; 0-point players are listed below it.
+  const podium = top.slice(0, 3).filter((x) => x.score > 0);
+  const rest = top.slice(podium.length);
   const ago = Math.max(0, Math.round((Date.now() - gotAt) / 1000));
 
   return (
@@ -106,16 +107,18 @@ export function PresentEvent(props: { id: string }) {
             <p>Scores appear here after the first quiz</p>
           </div>
         ) : (
-          <div class={`c9-pe-body ${rest.length ? '' : 'is-solo'}`}>
-            <div class="c9-pe-podium">
-              {[podium[1], podium[0], podium[2]].map((x, i) => x ? <PodiumCol key={x.rank} x={x} /> : <div key={`e${i}`} class="c9-pe-col" />)}
-            </div>
+          <div class={`c9-pe-body ${rest.length && podium.length ? '' : 'is-solo'}`}>
+            {podium.length > 0 && (
+              <div class="c9-pe-podium">
+                {[podium[1], podium[0], podium[2]].map((x, i) => x ? <PodiumCol key={`p${i}`} x={x} /> : <div key={`e${i}`} class="c9-pe-col" />)}
+              </div>
+            )}
             {rest.length > 0 && (
               <div class="c9-pe-list">
                 <div class="c9-pe-list__head"><span>#</span><span>Name</span><span>Quizzes</span><span>Score</span></div>
                 <ol class="c9-pe-rows">
-                  {rest.map((x) => (
-                    <li key={`${x.rank}-${x.name}`} class="c9-pe-row">
+                  {rest.map((x, i) => (
+                    <li key={`${i}-${x.name}`} class="c9-pe-row">
                       <span class="c9-pe-row__rank">{x.rank}</span>
                       <span class="c9-pe-row__name">{x.name}</span>
                       <span class="c9-pe-row__played">{x.quizzesPlayed}</span>
