@@ -4,7 +4,8 @@ import { csvRow } from '../util/csv';
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
-export function buildExportCsv(session: SessionRow, players: PlayerRow[], answers: AnswerRow[]): string {
+/** Non-kicked players with per-question answers and totals, in final rank order (score, then faster correct answers, then join order). */
+export function rankPlayers(session: SessionRow, players: PlayerRow[], answers: AnswerRow[]) {
   const questions = session.quiz.questions;
   const qPos = new Map<string, number>();
   questions.forEach((q, i) => qPos.set(q.id, i));
@@ -36,6 +37,12 @@ export function buildExportCsv(session: SessionRow, players: PlayerRow[], answer
     });
 
   rows.sort((a, b) => b.score - a.score || a.correctMs - b.correctMs || a.p.joinedAt - b.p.joinedAt);
+  return rows;
+}
+
+export function buildExportCsv(session: SessionRow, players: PlayerRow[], answers: AnswerRow[]): string {
+  const questions = session.quiz.questions;
+  const rows = rankPlayers(session, players, answers);
 
   const header = ['rank', 'name', 'email', 'score', 'correct_count', 'answered_count', 'total_response_ms'];
   questions.forEach((_, i) => header.push(`q${i + 1}_choice`, `q${i + 1}_correct`, `q${i + 1}_points`, `q${i + 1}_ms`));

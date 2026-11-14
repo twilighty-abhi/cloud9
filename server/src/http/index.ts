@@ -3,13 +3,13 @@ import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import QRCode from 'qrcode';
 import { z } from 'zod';
-import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard, SessionPatch } from '../../../shared/api';
+import type { Me, PublicSession, QuizDef, SessionSummary, SessionResult, EventDef, EventListItem, EventDetail, PublicEventBoard, SessionPatch } from '../../../shared/api';
 import type { RegisterRoutes, RouteDeps, SessionRow } from '../contracts';
 import { COOKIE_NAME, SESSION_TTL_MS } from '../auth/index';
 import { createRateLimiter } from '../util/rateLimit';
 import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
-import { buildExportCsv } from './exportCsv';
+import { buildExportCsv, rankPlayers } from './exportCsv';
 import { bus } from '../notify/bus';
 import type { NotifyEvent } from '../notify/contracts';
 import {
@@ -432,6 +432,22 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     }
     reply.header('content-type', 'image/svg+xml').header('cache-control', 'public, max-age=3600');
     return reply.send(svg);
+  });
+
+  api.get('/api/sessions/:code/summary', async (req, reply): Promise<SessionResult> => {
+    const me = requireMe(req);
+    const code = codeParam(req);
+    const row = repo.getLatestSessionByCode(code) ?? fail(404, 'not_found', 'Room not found');
+    if (!canAccess(me, row.moderatorId)) fail(403, 'forbidden', 'You do not own this room');
+    const players = repo.listPlayers(row.id);
+    const answers = repo.listAnswers(row.id); // flushes queued answers first
+    const leaderboard = rankPlayers(row, players, answers)
+      .slice(0, 10)
+      .map((r, i) => ({ rank: i + 1, name: r.p.name, score: r.score }));
+    const mem = registry.summary(code);
+    const live = !!mem && mem.id === row.id;
+    reply.header('cache-control', 'no-store');
+    return { ...(live ? mem! : summaryFromRow(row, eventNamer())), leaderboard, live };
   });
 
   api.get('/api/sessions/:code/export.csv', async (req, reply) => {

@@ -377,6 +377,36 @@ test('sessions: create, list, patch, qr, public list, play + join mapping, expor
     assert.deepEqual(parsed[2], ['2', 'Anu', 'anu@example.com', '900', '1', '1', '3000', 'B', '1', '900', '3000', '', '', '', '']);
     assert.equal(parsed[3][1], "'=SUM(A1)");
     assert.equal((await t.req('GET', `/api/sessions/${live}/export.csv`, 'root')).statusCode, 200);
+
+    // stored summary (for the Room page once the room is gone from memory)
+    assert.equal((await t.req('GET', `/api/sessions/${live}/summary`)).statusCode, 401);
+    assert.equal((await t.req('GET', `/api/sessions/${live}/summary`, 'bob')).statusCode, 403);
+    assert.equal((await t.req('GET', `/api/sessions/000000/summary`, 'alice')).statusCode, 404);
+    assert.equal((await t.req('GET', `/api/sessions/abc/summary`, 'alice')).statusCode, 404);
+    const sm1 = await t.req('GET', `/api/sessions/${live}/summary`, 'alice');
+    assert.equal(sm1.statusCode, 200, sm1.body);
+    assert.equal(sm1.json().live, true);
+    assert.equal(sm1.json().code, live);
+    t.repo.updateSession(sid, { state: 'FINISHED', endedAt: 1234 });
+    t.registry.rooms.delete(live); // restart / 6 h eviction
+    const sm = await t.req('GET', `/api/sessions/${live}/summary`, 'alice');
+    assert.equal(sm.statusCode, 200, sm.body);
+    const smj = sm.json();
+    assert.equal(smj.live, false);
+    assert.equal(smj.state, 'FINISHED');
+    assert.equal(smj.endedAt, 1234);
+    assert.equal(smj.title, 'Party, "Quiz"');
+    assert.equal(smj.label, 'New'); // patched earlier
+    assert.equal(smj.total, 2);
+    assert.equal(smj.players, players.length); // kicked not counted
+    assert.deepEqual(smj.leaderboard.slice(0, 2), [{ rank: 1, name: 'Anu (2)', score: 900 }, { rank: 2, name: 'Anu', score: 900 }]); // same order as CSV
+    assert.equal(smj.leaderboard.length, 3); // kicked excluded
+    assert.ok(!sm.body.includes('@'), 'no emails in the summary');
+    assert.match(String(sm.headers['cache-control']), /no-store/);
+    for (let i = 0; i < 12; i++) t.repo.insertPlayer({ id: `pz${i}`, sessionId: sid, name: `Z${i}`, email: null, tokenHash: 'hz' + i, score: 100 + i, kicked: false, joinedAt: 100 + i });
+    const big = (await t.req('GET', `/api/sessions/${live}/summary`, 'root')).json();
+    assert.equal(big.leaderboard.length, 10);
+    assert.deepEqual(big.leaderboard.map((e: any) => e.rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   } finally { await t.close(); }
 });
 

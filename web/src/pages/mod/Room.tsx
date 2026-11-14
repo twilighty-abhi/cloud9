@@ -5,12 +5,14 @@ import type { HostSnapshot, ModAction } from '../../../../shared/protocol';
 import type { BoardTop } from '../../../../shared/model';
 import { useRoom, useTick, type RoomConn } from '../../lib/ws';
 import { hostFixture } from '../../dev/modFixtures';
+import { RoomSaved } from './RoomSaved';
 import { fixture, load, mutate, errMsg, Link, Logo, Chip, Switch, LETTERS, qrSrc, fmtNum } from './common';
 
 type Conn = RoomConn<HostSnapshot>;
 
 function useFixtureConn(): Conn | null {
   const [snap] = useState(() => (fixture ? hostFixture(fixture) : null));
+  if (fixture === 'room-saved') return { snap: null, status: 'open', fatal: 'not_found', lastError: null, now: () => Date.now(), send: () => false };
   if (!snap) return null;
   return { snap, status: 'open', fatal: null, lastError: null, now: () => Date.now(), send: (m) => { console.info('[fixture] send', m); return true; } };
 }
@@ -27,7 +29,8 @@ export function Room(props: { code: string; me: Me }) {
     return <Notice title="You don't have access to this room" body="It belongs to another moderator, or your sign-in expired. Sign in again from the dashboard." />;
   }
   if (conn.fatal === 'not_found') {
-    return <Notice title="This room doesn't exist" body={`There's no live room with code ${props.code}. It may have ended and been cleared.`} />;
+    // Not in memory (finished > 6 h ago or the server restarted): show the stored result, or "doesn't exist".
+    return <RoomSaved code={props.code} />;
   }
   if (!snap) {
     return (
