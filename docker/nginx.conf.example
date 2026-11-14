@@ -1,20 +1,80 @@
-# Cloud 9 behind an existing host Nginx. Copy to /etc/nginx/sites-available/cloud9, adjust server_name,
-# symlink into sites-enabled, then: sudo nginx -t && sudo systemctl reload nginx
-# Get a cert with: sudo certbot --nginx -d quiz.example.com
-# The app container listens on 127.0.0.1:3000 (see docker-compose.yml).
+# Cloud 9 behind an existing host Nginx (this is how production runs).
+#
+# 1. Certificate (covers both names if you keep a secondary domain):
+#      sudo certbot certonly --nginx -d <PRIMARY_DOMAIN> -d <SECONDARY_DOMAIN>
+# 2. Copy to /etc/nginx/sites-available/cloud9, replace <PRIMARY_DOMAIN> / <SECONDARY_DOMAIN> (and the cert paths),
+#    symlink into sites-enabled, then:  sudo nginx -t && sudo systemctl reload nginx
+# 3. Set PUBLIC_URL=https://<PRIMARY_DOMAIN> in .env (QR codes and join links use it).
+#
+# The app container listens on 127.0.0.1:3000 (see docker-compose.yml). The app trusts the first proxy hop, so
+# X-Forwarded-For MUST be overwritten with $remote_addr (not appended) — otherwise clients could spoof their IP
+# and bypass the join/login rate limits.
+#
+# Do not add limit_req / limit_conn on /ws or the join API: a whole venue shares one NAT IP. The app rate-limits
+# joins and logins itself (JOIN_RATE_PER_MIN, LOGIN_RATE_PER_MIN).
 
 upstream cloud9 {
     server 127.0.0.1:3000;
     keepalive 32;
 }
 
+# HTTP → HTTPS (both names; certbot's HTTP-01 renewals are handled by the certbot nginx plugin).
 server {
     listen 80;
-    server_name quiz.example.com;
+    listen [::]:80;
+    server_name <PRIMARY_DOMAIN> <SECONDARY_DOMAIN>;
+    server_tokens off;
+    return 301 https://$host$request_uri;
+}
 
-    client_max_body_size 4m;        # CSV/JSON quiz imports
+# OPTIONAL: redirect the secondary domain to the primary.
+# Each domain has its own browser storage: players who switch domains rejoin as new players and moderators must log
+# in again. Some moderators still use the secondary today, so enable this only once everyone has moved (e.g. after an
+# event), and then remove <SECONDARY_DOMAIN> from the main HTTPS server block below.
+#
+# server {
+#     listen 443 ssl http2;
+#     listen [::]:443 ssl http2;
+#     server_name <SECONDARY_DOMAIN>;
+#     server_tokens off;
+#     ssl_certificate     /etc/letsencrypt/live/<PRIMARY_DOMAIN>/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/<PRIMARY_DOMAIN>/privkey.pem;
+#     include /etc/letsencrypt/options-ssl-nginx.conf;
+#     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+#     add_header Strict-Transport-Security "max-age=15552000" always;
+#     return 301 https://<PRIMARY_DOMAIN>$request_uri;
+# }
 
-    # WebSocket endpoint
+server {
+    # "ssl http2" on the listen line works on nginx 1.24 (Ubuntu 24.04); on nginx >= 1.25.1 you may use "http2 on;" instead.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name <PRIMARY_DOMAIN> <SECONDARY_DOMAIN>;
+
+    ssl_certificate     /etc/letsencrypt/live/<PRIMARY_DOMAIN>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<PRIMARY_DOMAIN>/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;     # created by certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;       # created by certbot
+
+    server_tokens off;               # no nginx version in headers / error pages
+
+    # Security headers. HSTS without includeSubDomains (other subdomains are not ours to pin).
+    add_header Strict-Transport-Security "max-age=15552000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 2m;         # matches the app's bodyLimit (2,000,000 bytes) for CSV/JSON quiz imports
+
+    # OPTIONAL: keep /healthz host-local (it shows live room/socket counts). Leave commented if an external monitor uses it.
+    # location = /healthz {
+    #     allow 127.0.0.1;
+    #     allow ::1;
+    #     deny all;
+    #     proxy_pass http://cloud9;
+    # }
+
+    # WebSocket endpoint. Long timeouts: the app pings every 20 s, but a quiet projector/mod screen must never be cut.
     location /ws {
         proxy_pass http://cloud9;
         proxy_http_version 1.1;
@@ -24,6 +84,7 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_connect_timeout 10s;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_buffering off;
@@ -37,9 +98,11 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_connect_timeout 10s;
         proxy_read_timeout 60s;
     }
 
     gzip on;
+    gzip_vary on;
     gzip_types text/css application/javascript application/json image/svg+xml text/csv;
 }

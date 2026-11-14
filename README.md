@@ -34,11 +34,18 @@ Then pick **one** way to expose it:
 
 | Option | How |
 |---|---|
-| **Existing Nginx** on the host | Copy `docker/nginx.conf.example` to `/etc/nginx/sites-available/cloud9`, set `server_name`, enable it, `sudo nginx -t && sudo systemctl reload nginx`, then `sudo certbot --nginx -d quiz.example.com`. The `/ws` block (Upgrade headers, `proxy_read_timeout 3600s`) is required. |
+| **Existing Nginx** on the host (what production uses) | Get a cert first (`sudo certbot certonly --nginx -d <PRIMARY_DOMAIN> [-d <SECONDARY_DOMAIN>]`), copy `docker/nginx.conf.example` to `/etc/nginx/sites-available/cloud9`, replace the domain placeholders, enable it, `sudo nginx -t && sudo systemctl reload nginx`. The `/ws` block (Upgrade headers, long timeouts) and `X-Forwarded-For $remote_addr` are required. |
 | **Caddy** (ports 80/443 free) | Set `DOMAIN=` in `.env`, point the DNS A record at the server, then `docker compose --profile caddy up -d --build`. Certificates are automatic. |
 | **Direct IP** (testing only) | In `docker-compose.yml` change the port to `"3000:3000"`, set `PUBLIC_URL=http://<server-ip>:3000`, `docker compose up -d`, open `http://<server-ip>:3000`. Revert before the event (plain HTTP, no Secure cookies). |
 
 `PUBLIC_URL` must be the exact URL players open: join links and QR codes are built from it.
+
+### Domains
+
+Production's primary domain is **`https://cloud9.gdgcloudkochi.com`**: set `PUBLIC_URL` to it, and share only links and
+QR codes on it. An older secondary domain still serves the same app and some moderators use it. Each origin has its own
+browser storage, so a player who switches domains rejoins as a new player and a moderator has to log in again. Once
+nobody uses the secondary, redirect it to the primary (optional server block in `docker/nginx.conf.example`).
 Changing `.env` needs `docker compose up -d` (recreates the container), not just `restart`.
 
 Update to a new version: `git pull && docker compose up -d --build`. Live rooms are restored from SQLite on boot.
@@ -62,6 +69,20 @@ Capital of Kerala?,Kochi,Thiruvananthapuram,Kozhikode,Thrissur,B,15,
 - quote any field that contains commas (`"Hello, world"`); save as UTF-8
 
 Start a session from the quiz, then show the QR / code. Toggle "Show on home page" off for private rooms.
+
+## Events
+
+An **event** groups the quizzes and sessions of one conference (for example several halls running at the same time) under
+one shared leaderboard.
+
+- Create the event on the `/mod` dashboard (**+ New event**), then pick it as the quiz's event in the editor or on
+  import. Every session started from an event quiz belongs to that event.
+- Players in event sessions must enter an email at join. The email is their identity across sessions, so scores from
+  every hall add up on the event leaderboard (a player who rejoins with the same email is rebound to their entry).
+- The moderator Event page shows the full leaderboard (with emails) and a CSV export (`/api/events/<id>/export.csv`).
+  Keep that CSV private.
+- Projector board: `/present/event/<id>` shows the public event leaderboard (top 10, names only, no emails).
+  Players see top-3 boards on their phones.
 
 ## Load test
 
@@ -144,3 +165,38 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
 `PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
+Also `JOIN_RATE_PER_MIN` (default 1000, joins per IP per minute) and `LOGIN_RATE_PER_MIN` (default 5, moderator logins
+per IP per minute; the example sets 20). In `.env`, a `$` in a password must be written as `$$` (Compose interpolates
+it), so prefer hex passwords (`openssl rand -hex 12`).
+
+## Capacity
+
+Measured in the pre-event load test (one container, 2 vCPU box):
+
+| Limit | Default | Notes |
+|---|---|---|
+| Players per room | `MAX_PLAYERS_PER_ROOM=500` | Player 501 gets `409 room_full` ("This quiz is full right now"). One room of 600 ran cleanly with the cap raised (ack p95 0.6 ms, CPU ~33 %), so `1000` is safe for a single big keynote room. |
+| Joins per IP per minute | `JOIN_RATE_PER_MIN=1000` | Everyone on venue Wi-Fi shares one public IP (NAT), and rejoins after reloads count too. Fine for ~200–600 joins/min; if all halls start in the same minute with more phones than that, set `3000`. The proxy must forward the real client IP (`X-Forwarded-For $remote_addr` in nginx, default in Caddy) or every player shares the proxy's IP. |
+| Moderator logins per IP per minute | `LOGIN_RATE_PER_MIN` (example: 20) | Moderators on venue Wi-Fi share one IP. |
+| Telegram | ~20 messages/min per group (Telegram's limit) | The sender is serial and rate-limited; with several halls live, per-question lines back up for minutes (no effect on the quiz). Keep `TELEGRAM_NOTIFY_QUESTIONS=0` for group chats and rely on the digest and finish/leaderboard messages. |
+| Memory | 2 GB limit | ~150–200 MB RSS at 200–600 players; the DB grows ~300 bytes per answer (a full event day is well under 100 MB). |
+
+## Operations quick reference
+
+Run from the deploy directory (`/opt/cloud9` on the server).
+
+- **Before updating:** do not update while a session is live (the build competes for CPU; open questions come back
+  Closed after the swap). Take a backup first (below).
+- **Update:** `docker tag cloud9:latest cloud9:prev && git pull && docker compose up -d --build`, then
+  `docker compose ps` (healthy) and `curl -s localhost:3000/healthz`.
+- **Rollback** to the image from before the update, without rebuilding:
+  `docker tag cloud9:prev cloud9:latest && docker compose up -d --no-build`, then `git checkout <old-sha>` so the
+  checkout matches. DB migrations are additive, so older code runs on a newer DB.
+- **Backup** (safe while live):
+  `docker compose exec -T app node -e "require('better-sqlite3')('/data/cloud9.db').backup('/data/backup-'+Date.now()+'.db').then(()=>console.log('ok'))"`,
+  then move it out of `./data` (`sudo mv data/backup-*.db /var/backups/cloud9/`) and copy it off the server
+  (`scp <user>@<server>:/var/backups/cloud9/backup-*.db .`). If `docker/backup.sh` / `docker/restore.sh` are in your
+  checkout, use those instead (verified, rotated, optional off-box copy).
+- **Restore:** `docker compose stop app`, move `data/cloud9.db`, `data/cloud9.db-wal` and `data/cloud9.db-shm` into a
+  safe folder (all three, or SQLite replays the old WAL onto the restored file), copy the backup to `data/cloud9.db`,
+  `sudo chown 1000:1000 data/cloud9.db`, `docker compose up -d --no-build`, check `/healthz` and the dashboard.
