@@ -4,15 +4,13 @@ import type { AttachNotifications, Bus, NotifyEvent, OutMsg, Button, Sender, Tel
 import type { Repo, GameRegistry } from '../contracts';
 import type { SessionSummary, BoardTop } from '../../../shared/model';
 import type { SessionPatch } from '../../../shared/api';
-import { esc, b, i, code, modName, fmtCode, medal, clip } from './html';
+import { esc, b, i, code, modName, fmtCode, medal, clip, safeName, EMAIL_RE } from './html';
 import { buildExportCsv } from '../http/exportCsv';
 import { slugify } from '../util/csv';
 
 // ───────────────────────────── pure formatting helpers ─────────────────────────────
 
-const EMAIL_RE = /[^\s@<>]+@[^\s@<>]+/g;
-/** Defensive: a player may type an email as their display name — never leak it into group chats. */
-export const safeName = (s: unknown) => String(s ?? '').replace(EMAIL_RE, '[hidden]').replace(/@/g, '＠');
+export { safeName }; // re-exported for existing importers; defined in ./html
 
 /** "HH:MM" in IST (UTC+5:30), independent of server TZ. */
 export function fmtIst(ms: number): string {
