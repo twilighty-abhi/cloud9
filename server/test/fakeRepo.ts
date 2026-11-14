@@ -48,7 +48,7 @@ export class FakeRepo implements Repo {
     }
     return [...agg.values()]
       .sort((x, y) => y.score - x.score || x.first - y.first || (x.key < y.key ? -1 : 1))
-      .map((a, i) => ({ key: a.key, name: a.name, email: a.email, score: a.score, quizzesPlayed: a.sessions.size, rank: i + 1 }));
+      .map((a, i, arr) => ({ key: a.key, name: a.name, email: a.email, score: a.score, quizzesPlayed: a.sessions.size, rank: arr.findIndex((b) => b.score === a.score) + 1 }));
   }
   getQuiz(id: string) { return this.quizzes.get(id) ?? null; }
   saveQuiz(q: QuizDef) { this.quizzes.set(q.id, structuredClone(q)); }

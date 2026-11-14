@@ -358,7 +358,7 @@ test('events: leaderboard aggregates by lowercase email, excludes kicked, names 
   assert.deepEqual(board, [
     { key: 'anu@x.test', name: 'Anu K', email: 'anu@x.test', score: 1300, quizzesPlayed: 2, rank: 1 },
     { key: 'bob@x.test', name: 'Bob', email: 'bob@x.test', score: 1200, quizzesPlayed: 1, rank: 2 },
-    { key: 'p:c1', name: 'NoMail', email: null, score: 1200, quizzesPlayed: 1, rank: 3 },
+    { key: 'p:c1', name: 'NoMail', email: null, score: 1200, quizzesPlayed: 1, rank: 2 }, // tie → shared rank
     { key: 'p:d1', name: 'EmptyMail', email: null, score: 50, quizzesPlayed: 1, rank: 4 },
   ]);
   assert.deepEqual(repo.eventLeaderboard('nope'), []);

@@ -263,7 +263,7 @@ test('game: started / question.closed / player.kicked / finished (event session,
     assert.deepEqual(fin.eventBoard!.top, [
       { name: 'Anu', score: 2000, rank: 1 },
       { name: 'Veteran', score: 1000, rank: 2 },
-      { name: 'Bala', score: 1000, rank: 3 },
+      { name: 'Bala', score: 1000, rank: 2 }, // tied with Veteran → shared rank
       { name: 'Chitra', score: 0, rank: 4 },
     ]);
     assertNoEmails(c.events);
@@ -301,7 +301,15 @@ test('game: mod end before last question → endedEarly, no event → eventBoard
     assert.equal(fin.leaderboard.length, 10);
     // all points included even though the last question was never revealed
     assert.deepEqual(fin.leaderboard.slice(0, 5).map((e) => e.score), [1000, 1000, 1000, 1000, 1000]);
-    assert.deepEqual(fin.leaderboard.map((e) => e.rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // competition ranking: a row either shares the previous row's rank (equal score) or takes its position
+    assert.equal(fin.leaderboard[0].rank, 1);
+    for (let i = 1; i < fin.leaderboard.length; i++) {
+      const [prev, cur] = [fin.leaderboard[i - 1], fin.leaderboard[i]];
+      if (cur.score !== prev.score) assert.equal(cur.rank, i + 1);
+      else assert.ok(cur.rank === prev.rank || cur.rank === i + 1);
+    }
+    // the 7 players who did not answer are all tied (0 points, no time) → rank 6
+    assert.deepEqual(fin.leaderboard.slice(5).map((e) => e.rank), [6, 6, 6, 6, 6]);
     for (let i = 1; i < fin.leaderboard.length; i++) assert.ok(fin.leaderboard[i - 1].score >= fin.leaderboard[i].score);
 
     // 'end' at the last question is not early
