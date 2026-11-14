@@ -592,6 +592,38 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
   }
 });
 
+test('answers: recorded with the score in one repo call; falls back to score + queue if that fails', async () => {
+  const repo = new FakeRepo();
+  const { registry, teardown } = await setup(repo);
+  try {
+    const s = registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: false });
+    const room = registry.get(s.code)!;
+    const ids = ['A', 'B', 'C'].map((n) => { const r = registry.join(s.code, { name: n }); return r.ok ? r.playerId : ''; });
+    const calls: [string, number | null][] = [];
+    const orig = repo.recordAnswer.bind(repo);
+    repo.recordAnswer = (a, pid, score) => { calls.push([pid, score]); orig(a, pid, score); };
+    room.modAction('start', -1);
+    const t0 = room.qStartedAt!;
+    assert.ok(room.answer(room.players.get(ids[0])!, 0, 1, t0 + 1000).ok); // correct
+    assert.ok(room.answer(room.players.get(ids[1])!, 0, 0, t0 + 1000).ok); // wrong → score untouched
+    const scoreA = room.players.get(ids[0])!.score;
+    assert.deepEqual(calls, [[ids[0], scoreA], [ids[1], null]]);
+    assert.equal(repo.answers.length, 2); // stored immediately, not via the queue
+    assert.equal(repo.queue.length, 0);
+    assert.equal(repo.players.get(ids[0])!.score, scoreA);
+    // DB error on the transactional path → old path: score update + buffered row
+    repo.recordAnswer = () => { throw new Error('disk I/O error'); };
+    assert.ok(room.answer(room.players.get(ids[2])!, 0, 1, t0 + 2000).ok);
+    const scoreC = room.players.get(ids[2])!.score;
+    assert.ok(scoreC > 0);
+    assert.equal(repo.players.get(ids[2])!.score, scoreC);
+    assert.equal(repo.queue.length, 1);
+    assert.equal(repo.listAnswers(s.id).length, 3);
+  } finally {
+    await teardown();
+  }
+});
+
 test('events: no event → eventName/eventBoard null; quiz emailMode honoured', async () => {
   const { registry, teardown } = await setup();
   try {

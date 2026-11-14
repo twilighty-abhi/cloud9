@@ -542,9 +542,16 @@ export class Room {
     this.answered++;
     if (choice < this.distribution.length) this.distribution[choice]++;
 
-    if (points) this.safeRepo('updatePlayer', () => this.repo.updatePlayer(p.id, { score: p.score }));
     const row: AnswerRow = { sessionId: this.id, playerId: p.id, questionId: q.id, qIndex, choice, correct, responseMs, points, answeredAt: now };
-    this.safeRepo('queueAnswer', () => this.repo.queueAnswer(row));
+    // Answer row + score in one synchronous transaction (crash-consistent). If that fails, fall back to the old path
+    // (score update + buffered row, retried by the queue) so a transient DB error never loses the answer.
+    try {
+      this.repo.recordAnswer(row, p.id, points ? p.score : null);
+    } catch (e) {
+      console.error(`[game] repo.recordAnswer failed (room ${this.code}); falling back to queue`, e);
+      if (points) this.safeRepo('updatePlayer', () => this.repo.updatePlayer(p.id, { score: p.score }));
+      this.safeRepo('queueAnswer', () => this.repo.queueAnswer(row));
+    }
 
     const ack = JSON.stringify({ t: 'ack', v: this.v, qIndex, choice } satisfies ServerMsg);
     for (const ws of p.sockets) sendRaw(ws, ack);

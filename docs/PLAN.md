@@ -121,7 +121,7 @@ Target bundle sizes: participant JS < 40 KB gzipped, CSS < 10 KB.
 
 - Peak write load is ~200 answer inserts in 1–2 s. SQLite WAL handles thousands of inserts/s.
 - Only one process writes, so there is **no lock contention**.
-- Answers are queued in memory and flushed in **one transaction every 100 ms**.
+- Each answer row is written together with the player's new score in **one small synchronous transaction** (crash-consistent; ~0.1 ms). The 100 ms batched queue remains only as a fallback if that write fails.
 - Players never wait on the DB; acknowledgements come from in-memory state.
 - Settings: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON`.
 - Backup: `sqlite3 data/cloud9.db ".backup data/backup-$(date +%s).db"`, or copy the volume after the event.
@@ -307,7 +307,7 @@ else:
 | RAM (Caddy) | ~30 MB |
 | CPU | Spikes < 30% of one vCPU on broadcast/answer bursts |
 | Broadcast cost | 250 × ~300 B payload = trivial; done with a pre-serialised string |
-| DB writes | 1 batched transaction / 100 ms |
+| DB writes | 1 small transaction per answer (row + score); batched queue as fallback |
 | Home-page polling | 200 idle browsers ÷ 5 s = ~40 req/s, served from a 2 s in-memory cache (no DB hit) |
 
 Tactics:

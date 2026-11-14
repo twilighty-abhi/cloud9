@@ -71,8 +71,9 @@ export interface ModeratorRow { id: string; username: string; displayName: strin
 
 // ───────────────────────────── Repo (Agent B) ─────────────────────────────
 // Synchronous (better-sqlite3). All methods must be safe to call at high frequency.
-// Writes that happen on the hot path (insertPlayer, updatePlayerScore, queueAnswer, updateSession) are cheap single statements
-// or queued; queueAnswer is buffered and flushed in ONE transaction every 100 ms (and on flush()/close()).
+// Writes that happen on the hot path (insertPlayer, recordAnswer, updateSession) are cheap synchronous statements.
+// recordAnswer writes the answer row + the player's new score in ONE transaction (crash-consistent).
+// queueAnswer is a fallback buffer flushed in ONE transaction every 100 ms (and on flush()/close()).
 
 export interface Repo {
   upsertModerator(m: ModeratorRow): void;
@@ -103,7 +104,9 @@ export interface Repo {
   listPlayers(sessionId: string): PlayerRow[];               // join order
   countPlayers(sessionId: string): number;                   // non-kicked
 
-  queueAnswer(a: AnswerRow): void;                           // buffered
+  /** Answer row + (if newScore !== null) players.score = newScore for playerId, in one synchronous transaction. Throws on failure. */
+  recordAnswer(a: AnswerRow, playerId: string, newScore: number | null): void;
+  queueAnswer(a: AnswerRow): void;                           // buffered (fallback)
   listAnswers(sessionId: string): AnswerRow[];               // flushes the queue first
   flush(): void;
   close(): void;                                             // flush + close db

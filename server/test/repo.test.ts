@@ -132,6 +132,101 @@ test('answers: buffered, deduped, flushed by timer/flush/listAnswers/close', asy
   repo.queueAnswer(ans('late', 'q1')); // after close: silently dropped
 });
 
+test('recordAnswer: answer row + score in one transaction; dedupe; score untouched when newScore is null', () => {
+  const repo = openRepo(':memory:');
+  const q = quiz('rq', 1);
+  repo.saveQuiz(q);
+  repo.insertSession(session('s1', '510001', q));
+  repo.insertPlayer({ id: 'p1', sessionId: 's1', name: 'A', email: null, tokenHash: 'h1', score: 0, kicked: false, joinedAt: 1 });
+  repo.insertPlayer({ id: 'p2', sessionId: 's1', name: 'B', email: null, tokenHash: 'h2', score: 7, kicked: false, joinedAt: 2 });
+  repo.recordAnswer(ans('p1', 'q1', { points: 900 }), 'p1', 900);
+  repo.recordAnswer(ans('p2', 'q1', { correct: false, points: 0 }), 'p2', null);
+  // visible immediately, no flush needed
+  assert.equal(repo.listAnswers('s1').length, 2);
+  assert.equal(repo.listPlayers('s1').find((p) => p.id === 'p1')!.score, 900);
+  assert.equal(repo.listPlayers('s1').find((p) => p.id === 'p2')!.score, 7);
+  repo.recordAnswer(ans('p1', 'q1', { choice: 3 }), 'p1', 900); // duplicate PK → ignored, never throws
+  assert.equal(repo.listAnswers('s1').find((a) => a.playerId === 'p1')!.choice, 1);
+  repo.close();
+  assert.throws(() => repo.recordAnswer(ans('p3', 'q1'), 'p3', 1)); // closed → throws (caller falls back)
+});
+
+test('recordAnswer perf: 2000 answers (200/s burst x10) stay < 1 ms each on a file db', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'c9perf-'));
+  try {
+    const repo = openRepo(join(dir, 'p.db'));
+    const q = quiz('pq', 1);
+    repo.saveQuiz(q);
+    repo.insertSession(session('s1', '510002', q));
+    const N = 2000;
+    for (let i = 0; i < N; i++) repo.insertPlayer({ id: `pp${i}`, sessionId: 's1', name: `N${i}`, email: null, tokenHash: `h${i}`, score: 0, kicked: false, joinedAt: i });
+    const t0 = performance.now();
+    let worst = 0;
+    for (let i = 0; i < N; i++) {
+      const t = performance.now();
+      repo.recordAnswer(ans(`pp${i}`, 'q1', { points: 100 + i }), `pp${i}`, 100 + i);
+      worst = Math.max(worst, performance.now() - t);
+    }
+    const avg = (performance.now() - t0) / N;
+    console.log(`# recordAnswer: avg ${avg.toFixed(3)}ms, worst ${worst.toFixed(2)}ms over ${N}`);
+    assert.ok(avg < 1, `recordAnswer avg ${avg.toFixed(3)}ms`);
+    assert.equal(repo.listAnswers('s1').length, N);
+    repo.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hard crash (SIGKILL, no flush/close): recordAnswer keeps answers and scores consistent', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const child = fileURLToPath(new URL('./repoCrashChild.ts', import.meta.url));
+  const { pathToFileURL } = await import('node:url');
+  const tsxLoader = pathToFileURL(fileURLToPath(new URL('../../node_modules/tsx/dist/loader.mjs', import.meta.url))).href;
+  const dir = mkdtempSync(join(tmpdir(), 'c9crash-'));
+  const N = 50;
+  const prepare = (path: string) => {
+    const r = openRepo(path);
+    const q = quiz('cq', 1);
+    r.saveQuiz(q);
+    r.insertSession(session('s1', '510003', q));
+    for (let i = 0; i < N; i++) r.insertPlayer({ id: `p${i}`, sessionId: 's1', name: `N${i}`, email: null, tokenHash: `h${i}`, score: 0, kicked: false, joinedAt: i });
+    r.close();
+  };
+  const crashAndCheck = (mode: 'record' | 'legacy') => {
+    const path = join(dir, `${mode}.db`);
+    prepare(path);
+    const res = spawnSync(process.execPath, ['--import', tsxLoader, child, path, mode, String(N)], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(res.signal, 'SIGKILL', `child should die by SIGKILL: ${res.stderr}`);
+    assert.match(res.stdout, /written/);
+    const r = openRepo(path);
+    const answers = r.listAnswers('s1');
+    const players = r.listPlayers('s1');
+    r.close();
+    const scored = players.filter((p) => p.score > 0);
+    const byPlayer = new Map(answers.map((a) => [a.playerId, a.points]));
+    const consistent = players.every((p) => p.score === (byPlayer.get(p.id) ?? 0));
+    return { answers: answers.length, scored: scored.length, consistent };
+  };
+  try {
+    const rec = crashAndCheck('record');
+    assert.deepEqual(rec, { answers: N, scored: N, consistent: true });
+    // the pre-fix path (score now, row in the 100 ms buffer) loses rows on the same crash — shows what this guards against
+    const legacy = crashAndCheck('legacy');
+    assert.equal(legacy.scored, N);
+    assert.equal(legacy.answers, 0);
+    assert.equal(legacy.consistent, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('close flushes pending answers to file db', async () => {
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
