@@ -2,7 +2,7 @@
 // All bodies are JSON. Errors: HTTP 4xx/5xx with body ApiError.
 // Moderator routes require the `c9_session` httpOnly cookie set by /api/auth/login.
 
-import type { EmailMode, ScoringMode, QuizDef, QuizListItem, SessionSummary, PublicSession, QuestionDef, RoomState, EventDef, EventListItem, EventLeaderEntry } from './model';
+import type { EmailMode, ScoringMode, QuizDef, QuizListItem, SessionSummary, PublicSession, QuestionDef, RoomState, EventDef, EventListItem, EventLeaderEntry, BoardTop } from './model';
 
 export interface ApiError { error: string; message: string }
 
@@ -71,6 +71,10 @@ export interface PublicEventBoard { eventName: string; top: { name: string; scor
 // GET   /api/sessions/:code/qr.svg    → image/svg+xml (QR of joinUrl)   (no auth needed)
 // GET   /api/sessions/:code/export.csv → text/csv  (auth; columns below)
 //   rank,name,email,score,correct_count,answered_count,total_response_ms,q1_choice,q1_correct,q1_points,q1_ms,...
+// GET   /api/sessions/:code/summary   → 200 SessionResult (auth: owner or super, else 403; 404 if no such session)
+//   Stored result of the latest session with this code — works after the room left memory (6 h / restart).
+//   leaderboard = top 10 from the DB, same order as the CSV; no emails. live = room still held in memory.
+export interface SessionResult extends SessionSummary { leaderboard: BoardTop[]; live: boolean }
 export interface CreateSessionReq { quizId: string; label?: string; listed?: boolean }
 export interface SessionPatch { label?: string; listed?: boolean; joinOpen?: boolean }
 

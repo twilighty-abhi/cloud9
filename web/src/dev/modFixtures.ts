@@ -8,7 +8,7 @@ export const FIXTURE_NAMES = [
   'login', 'dashboard', 'editor', 'import',
   'room-lobby', 'room-question', 'room-closed', 'room-reveal', 'room-leaderboard', 'room-finished',
   'dashboard-events', 'event-mine', 'event-other', 'event-leaderboard', 'editor-event', 'import-event',
-  'room-leaderboard-event', 'room-finished-event',
+  'room-leaderboard-event', 'room-finished-event', 'room-saved',
   'present-lobby', 'present-question', 'present-closed', 'present-reveal', 'present-leaderboard', 'present-finished',
 ] as const;
 
@@ -160,6 +160,13 @@ export function fixtureGet(fixture: string, url: string): unknown {
     return fxQuiz;
   }
   if (url === '/api/events') return fxEvents;
+  if (url === `/api/sessions/${CODE}/summary`) {
+    return {
+      ...fxSessions[0], code: CODE, state: 'FINISHED', title: 'Cloud Basics Warm-up', label: 'Hall A · Round 1', eventId: 'ev1', eventName: EV,
+      players: NAMES.length, total: 10, endedAt: Date.now() - 7 * 3600_000, live: false,
+      leaderboard: leaderboard().map(({ name, score, rank }) => ({ name, score, rank })),
+    };
+  }
   let m: RegExpExecArray | null;
   if ((m = /^\/api\/events\/([^/]+)\/leaderboard$/.exec(url))) return m[1] === 'ev3' ? [] : eventBoard();
   if ((m = /^\/api\/events\/([^/]+)$/.exec(url))) return eventDetail(m[1]);
