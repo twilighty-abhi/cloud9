@@ -25,8 +25,17 @@ export function createRateLimiter(opts: { max: number; windowMs: number; maxKeys
     hit(key, now = Date.now()) {
       sweep(now);
       let arr = hits.get(key);
-      if (!arr) {
-        if (hits.size >= maxKeys) hits.clear(); // memory safety valve
+      if (arr) {
+        // Move to the end so Map insertion order stays least-recently-used first.
+        hits.delete(key);
+        hits.set(key, arr);
+      } else {
+        // Memory safety valve: evict the least-recently-used key instead of flushing everyone's history
+        // (a full clear would let key spraying reset the limit for every other client).
+        if (hits.size >= maxKeys) {
+          const oldest = hits.keys().next().value;
+          if (oldest !== undefined) hits.delete(oldest);
+        }
         arr = [];
         hits.set(key, arr);
       }

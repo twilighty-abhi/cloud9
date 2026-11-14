@@ -23,8 +23,8 @@ services:
     mem_limit: 2g
     cpus: 2.0
     ports:
-      # Reachable only from the host (Nginx/Caddy on the host proxies to it).
-      # For quick testing on http://<server-ip>:3000 change to "3000:3000" (revert afterwards).
+      # Reachable only from the host (Nginx/Caddy on the host proxies to it). Keep it on 127.0.0.1:
+      # never publish "3000:3000". For testing before DNS/TLS use an SSH tunnel (ssh -L 3000:127.0.0.1:3000).
       - "127.0.0.1:3000:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
