@@ -64,7 +64,7 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
       </Message>
     );
   }
-  if (!info) return <Shell><div class="c9-p-center"><div class="c9-p-spinner" aria-label="Loading" /></div></Shell>;
+  if (!info) return <Shell><div class="c9-p-center"><div class="c9-p-spinner" role="img" aria-label="Loading" /></div></Shell>;
   if (fatal === 'kicked') {
     return <Message title="You were removed from this quiz" body="The host removed you from this quiz. If you think this was a mistake, talk to the host." home />;
   }

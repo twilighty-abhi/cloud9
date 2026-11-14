@@ -50,6 +50,7 @@ export function Home() {
         </div>
       </header>
       <main class="c9-h-inner c9-h-main">
+        <h1 class="c9-sr">CCD Kochi Live Quiz</h1>
         <div class="c9-ccd-hero">
           <CcdSymbols size={18} />
           <p class="c9-ccd-hero__line">At the speed of <span>thought.</span></p>

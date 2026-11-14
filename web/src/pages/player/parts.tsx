@@ -45,7 +45,7 @@ export function LiveShell(props: { title: string; score: number | null; status: 
           <span class="c9-p-bar__title">{props.title}</span>
           {off && <span class="c9-conn c9-conn--off c9-p-bar__conn" role="status">{props.status === 'closed' ? 'Offline' : 'Reconnecting…'}</span>}
           {props.score !== null && (
-            <span class="c9-p-bar__score" aria-label={`Your score: ${props.score}`}>{fmtNum(props.score)}<small>pts</small></span>
+            <span class="c9-p-bar__score"><span class="c9-sr">Your score: </span>{fmtNum(props.score)}<small>pts</small></span>
           )}
         </div>
       </header>
