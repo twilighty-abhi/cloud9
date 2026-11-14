@@ -4,7 +4,7 @@ import type { PublicSession } from '../../../../shared/model';
 import { get } from '../../lib/api';
 import { navigate, linkClick } from '../../lib/router';
 import { getPlayer } from '../../lib/storage';
-import { fixtureName, homeFixture } from '../../dev/playerFixtures';
+import { fixtureName, devFx } from '../../lib/fixtures';
 import { IconArrowRight, IconUsers } from '../player/icons';
 import './home.css';
 import { Brand, CcdSymbols } from '../../lib/brand';
@@ -12,8 +12,8 @@ import { Brand, CcdSymbols } from '../../lib/brand';
 const POLL_MS = 5000;
 
 export function Home() {
-  const fx = fixtureName();
-  const fxData = fx ? homeFixture(fx) : null;
+  const fx = import.meta.env.DEV ? fixtureName() : null; // dev-only fixtures (#14)
+  const fxData = fx ? devFx()!.homeFixture(fx) : null;
   const [sessions, setSessions] = useState<PublicSession[] | null>(Array.isArray(fxData) ? fxData : null);
   const [failed, setFailed] = useState(fxData === 'error');
 

@@ -4,8 +4,7 @@ import type { HostSnapshot } from '../../../../shared/protocol';
 import type { LeaderEntry } from '../../../../shared/model';
 import { useRoom, useTick, type RoomConn } from '../../lib/ws';
 import { query } from '../../lib/router';
-import { hostFixture } from '../../dev/modFixtures';
-import { presentFixture } from '../../dev/presentFixtures';
+import { fixtureName, devFx } from '../../lib/fixtures';
 import { LETTERS, qrSrc, fmtNum } from '../mod/common';
 import './present.css';
 import { Brand } from '../../lib/brand';
@@ -13,7 +12,7 @@ import { Brand } from '../../lib/brand';
 type Conn = RoomConn<HostSnapshot>;
 
 export function Present(props: { code: string }) {
-  const [fxSnap] = useState(() => { const f = query('fixture'); return f ? (presentFixture(f) ?? hostFixture(f)) : null; });
+  const [fxSnap] = useState(() => { const f = fixtureName(); const d = devFx(); return f && d ? (d.presentFixture(f) ?? d.hostFixture(f)) : null; });
   const live = useRoom<HostSnapshot>(fxSnap ? null : { role: 'present', code: props.code });
   const conn: Conn = fxSnap ? { snap: fxSnap, status: 'open', fatal: null, lastError: null, now: () => Date.now(), send: () => true } : live;
   const snap = conn.snap;

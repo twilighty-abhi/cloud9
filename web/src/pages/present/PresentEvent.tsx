@@ -5,7 +5,7 @@ import { get, HttpError } from '../../lib/api';
 import { query } from '../../lib/router';
 import { useTick } from '../../lib/ws';
 import { Brand, Sparkle, HalfCircle, Flower } from '../../lib/brand';
-import { eventBoardFixture } from '../../dev/presentFixtures';
+import { fixtureName, devFx } from '../../lib/fixtures';
 import './present.css';
 
 const POLL_MS = 5000;
@@ -14,7 +14,7 @@ type Entry = PublicEventBoard['top'][number];
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 
 export function PresentEvent(props: { id: string }) {
-  const fx = (() => { const f = query('fixture'); return f ? eventBoardFixture(f) : null; })();
+  const fx = (() => { const f = fixtureName(); const d = devFx(); return f && d ? d.eventBoardFixture(f) : null; })();
   const [board, setBoard] = useState<PublicEventBoard | null>(fx && fx !== 'not_found' ? fx : null);
   const [gotAt, setGotAt] = useState<number>(fx && fx !== 'not_found' ? Date.now() - 3000 : 0);
   const [notFound, setNotFound] = useState(fx === 'not_found');

@@ -4,17 +4,17 @@ import { useEffect, useState } from 'preact/hooks';
 import type { RoomState, EventListItem, EmailMode } from '../../../../shared/model';
 import { get, api, HttpError } from '../../lib/api';
 import { query, linkClick } from '../../lib/router';
-import { fixtureGet, fakeQr, fxMe, fixtureParam } from '../../dev/modFixtures';
+import { devFx } from '../../lib/fixtures';
 import { Brand } from '../../lib/brand';
 
-export const fxMeOr = () => fxMe;
+export const fxMeOr = () => devFx()!.fxMe;
 
-/** Active dev fixture name (?fixture=…) or null. */
-export const fixture: string | null = (() => { try { return query('fixture'); } catch { return null; } })();
+/** Active dev fixture name (?fixture=…) or null. Always null in production builds (#14). */
+export const fixture: string | null = import.meta.env.DEV ? (() => { try { return query('fixture'); } catch { return null; } })() : null;
 
 /** Read a query param (fixture mode can fake some). */
 export function param(name: string): string | null {
-  if (fixture) return fixtureParam(fixture, name);
+  if (fixture) return devFx()!.fixtureParam(fixture, name);
   try { return query(name); } catch { return null; }
 }
 
@@ -43,7 +43,7 @@ export function apiErrMsg(e: unknown): string {
 /** GET that serves fixture data in fixture mode. */
 export async function load<T>(url: string): Promise<T> {
   if (fixture) {
-    try { return fixtureGet(fixture, url) as T; }
+    try { return devFx()!.fixtureGet(fixture, url) as T; }
     catch (e) { const x = e as { status: number; code: string; message: string }; throw new HttpError(x.status, x.code, x.message); }
   }
   return get<T>(url);
@@ -55,7 +55,7 @@ export async function mutate<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url
   return api<T>(method, url, body ?? (method === 'DELETE' ? undefined : {}));
 }
 
-export const qrSrc = (code: string) => (fixture ? fakeQr() : `/api/sessions/${encodeURIComponent(code)}/qr.svg`);
+export const qrSrc = (code: string) => (fixture ? devFx()!.fakeQr() : `/api/sessions/${encodeURIComponent(code)}/qr.svg`);
 
 export const LETTERS = ['A', 'B', 'C', 'D'];
 
