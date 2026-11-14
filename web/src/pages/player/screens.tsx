@@ -80,9 +80,13 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
   const locked = myChoice !== null;
   const timeUp = remaining <= 0 && !locked;
   const urgent = secs <= 5;
+  // Long questions get a smaller (clamped) font so the answers stay on screen on small phones (#16).
+  const len = q.text.length;
+  const textSize = len > 200 ? 'c9-p-q__text--xlong' : len > 110 ? 'c9-p-q__text--long' : '';
 
   return (
-    <div class="c9-p-q">
+    <div class={`c9-p-q ${q.imageUrl ? 'c9-p-q--img' : ''}`}>
+      <div class="c9-p-q__head">
       <div class="c9-p-q__meta">
         <span class="c9-overline">Question {q.qIndex + 1} of {q.total}</span>
         <span class={`c9-p-timer ${urgent ? 'c9-p-timer--urgent' : ''}`} aria-label={`${secs} seconds left`}>
@@ -92,7 +96,8 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
       <div class={`yy-progress c9-p-q__bar ${urgent ? 'c9-p-q__bar--urgent' : ''}`} role="presentation">
         <span style={{ transform: `scaleX(${frac})` }} />
       </div>
-      <h1 class="c9-p-q__text">{q.text}</h1>
+      </div>
+      <h1 class={`c9-p-q__text ${textSize}`}>{q.text}</h1>
       {q.imageUrl && <QImage src={q.imageUrl} />}
 
       {timeUp ? (
