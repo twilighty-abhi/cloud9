@@ -55,6 +55,8 @@ export class Room {
   endedAt: number | null;
   /** Monotonic across restarts: seeded from the clock, +1 per change. */
   v: number;
+  /** Last time anything happened in this room (state change, join, answer, socket attach/detach, settings). For idle eviction. */
+  lastActivityAt: number;
 
   readonly players = new Map<string, PlayerMem>(); // insertion order = join order
   private readonly byToken = new Map<string, PlayerMem>();
@@ -95,7 +97,10 @@ export class Room {
     this.qEndsAt = row.qEndsAt;
     this.endedAt = row.endedAt;
     this.v = Date.now();
+    this.lastActivityAt = Date.now();
   }
+
+  private touch(): void { this.lastActivityAt = Date.now(); }
 
   // ───────────── helpers ─────────────
 
@@ -413,6 +418,7 @@ export class Room {
   }
 
   private commit(): void {
+    this.touch();
     this.v++;
     this.invalidateRanking();
     this.persistState();
@@ -534,6 +540,7 @@ export class Room {
     if (p.answers.has(qIndex)) return fail('already_answered', 'Already answered');
     if (this.qEndsAt === null || this.qStartedAt === null || now > this.qEndsAt + this.graceMs) return fail('too_late', 'Time is up');
 
+    this.touch();
     const responseMs = Math.max(0, now - this.qStartedAt);
     const correct = choice === q.correctIndex;
     const points = scoreAnswer({ correct, responseMs, timeLimitSec: q.timeLimitSec, pointsMax: q.pointsMax, scoring: this.quiz.scoring });
@@ -565,6 +572,7 @@ export class Room {
     this.byToken.set(p.tokenHash, p);
     this.nameKeys.add(p.name.toLowerCase());
     this.invalidateRanking();
+    this.touch();
     return p;
   }
 
@@ -574,6 +582,7 @@ export class Room {
     const p = this.players.get(playerId);
     if (!p) return fail('not_found', 'Player not found');
     if (p.kicked) return { ok: true };
+    this.touch();
     p.kicked = true;
     this.invalidateRanking();
     this.safeRepo('updatePlayer', () => this.repo.updatePlayer(p.id, { kicked: true }));
@@ -595,16 +604,19 @@ export class Room {
   }
 
   attachHost(ws: WebSocket, role: 'mod' | 'present'): void {
+    this.touch();
     (role === 'mod' ? this.mods : this.presents).add(ws);
     this.sendStateTo(ws, role);
   }
 
   detachHost(ws: WebSocket): void {
+    this.touch();
     this.mods.delete(ws);
     this.presents.delete(ws);
   }
 
   attachPlayer(ws: WebSocket, p: PlayerMem): void {
+    this.touch();
     const wasConnected = p.sockets.size > 0;
     p.sockets.add(ws);
     this.sendStateTo(ws, 'player', p);
@@ -613,6 +625,7 @@ export class Room {
 
   detachPlayer(ws: WebSocket, p: PlayerMem): void {
     if (!p.sockets.delete(ws)) return;
+    this.touch();
     if (p.sockets.size === 0) {
       this.markDelta('lobby');
       this.checkAllAnswered();
@@ -627,6 +640,7 @@ export class Room {
     if (typeof patch.listed === 'boolean') this.listed = upd.listed = patch.listed;
     if (typeof patch.joinOpen === 'boolean') this.joinOpen = upd.joinOpen = patch.joinOpen;
     if (Object.keys(upd).length === 0) return;
+    this.touch();
     this.safeRepo('updateSession', () => this.repo.updateSession(this.id, upd));
     this.v++;
     this.broadcastState();

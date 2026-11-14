@@ -142,5 +142,5 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 ## Configuration
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
-(`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
+(`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `ROOM_IDLE_EVICT_HOURS` (default 24), `LOG_LEVEL`, `DOMAIN` (Caddy only).
 `PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
