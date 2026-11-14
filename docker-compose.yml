@@ -10,7 +10,8 @@ x-logging: &logging
 services:
   app:
     build: .
-    image: cloud9:latest
+    # Tag per release (IMAGE_TAG=$(git rev-parse --short HEAD)) so the previous image stays available for rollback.
+    image: cloud9:${IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     env_file: .env
