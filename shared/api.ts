@@ -65,7 +65,8 @@ export interface EventDetail { event: EventDef; quizzes: QuizListItem[]; session
 export interface PublicEventBoard { eventName: string; top: { name: string; score: number; rank: number; quizzesPlayed: number }[]; total: number; updatedAt: number }
 
 // ── sessions (moderator) ──
-// POST  /api/sessions                 body CreateSessionReq → 201 SessionSummary
+// POST  /api/sessions                 body CreateSessionReq → 201 SessionSummary (quiz owner or super, else 403; the session's
+//        moderatorId is always the QUIZ OWNER; blank/missing label → parsed from the title, e.g. "Hall 3 · 2:00 PM")
 // GET   /api/sessions                 → 200 SessionSummary[] (own; super sees all; newest first; includes finished)
 // PATCH /api/sessions/:code           body SessionPatch → 200 SessionSummary
 // GET   /api/sessions/:code/qr.svg    → image/svg+xml (QR of joinUrl)   (no auth needed)

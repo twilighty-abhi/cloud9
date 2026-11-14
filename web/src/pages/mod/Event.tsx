@@ -213,9 +213,9 @@ function QuizRow({ q, me }: { q: QuizListItem; me: Me }) {
       {!mine && <div class="c9-m-row__chips"><Chip tone="neutral" title="Added by another moderator">Another moderator</Chip></div>}
       <div class="c9-m-row__actions">
         {canEdit && <Link class="yy-btn yy-btn--quiet yy-btn--sm" href={`/mod/quiz/${q.id}`}>Edit</Link>}
-        <button class="yy-btn yy-btn--secondary yy-btn--sm" aria-expanded={start} onClick={() => setStart(!start)}>Start session</button>
+        {canEdit && <button class="yy-btn yy-btn--secondary yy-btn--sm" aria-expanded={start} onClick={() => setStart(!start)}>Start session</button>}
       </div>
-      {start && <StartForm quiz={q} onCancel={() => setStart(false)} />}
+      {canEdit && start && <StartForm quiz={q} onCancel={() => setStart(false)} />}
     </li>
   );
 }

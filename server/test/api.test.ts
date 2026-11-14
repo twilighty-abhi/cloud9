@@ -381,6 +381,46 @@ test('sessions: create, list, patch, qr, public list, play + join mapping, expor
 });
 
 // ───────────── events ─────────────
+test('sessions: owner is the quiz owner (super may start any quiz), default label parsed from the title', async () => {
+  const t = await setup();
+  try {
+    await t.login('alice', 'pw-alice');
+    await t.login('bob', 'pw-bob');
+    await t.login('root', 'pw:root');
+    const quiz = (await t.req('POST', '/api/quizzes', 'alice', sampleQuiz('Hall 3 · 2:00–2:30 PM · Cloud Basics'))).json();
+
+    // non-owner hall moderator still can't start it
+    assert.equal((await t.req('POST', '/api/sessions', 'bob', { quizId: quiz.id })).statusCode, 403);
+
+    // super starts alice's quiz → the room belongs to alice, label from the title
+    const r = await t.req('POST', '/api/sessions', 'root', { quizId: quiz.id });
+    assert.equal(r.statusCode, 201, r.body);
+    const s = r.json();
+    assert.equal(s.moderatorId, 'mod_alice');
+    assert.equal(s.label, 'Hall 3 · 2:00 PM');
+    assert.equal(t.repo.getLatestSessionByCode(s.code)!.moderatorId, 'mod_alice');
+    // alice can manage it; it shows in her list
+    assert.equal((await t.req('PATCH', `/api/sessions/${s.code}`, 'alice', { listed: false })).statusCode, 200);
+    assert.ok((await t.req('GET', '/api/sessions', 'alice')).json().some((x: any) => x.code === s.code));
+    assert.equal((await t.req('GET', `/api/sessions/${s.code}/export.csv`, 'alice')).statusCode, 200);
+    // super can still manage it too
+    assert.equal((await t.req('PATCH', `/api/sessions/${s.code}`, 'root', { listed: true })).statusCode, 200);
+
+    // blank label → default; explicit label wins
+    assert.equal((await t.req('POST', '/api/sessions', 'alice', { quizId: quiz.id, label: '   ' })).json().label, 'Hall 3 · 2:00 PM');
+    assert.equal((await t.req('POST', '/api/sessions', 'alice', { quizId: quiz.id, label: ' Custom ' })).json().label, 'Custom');
+    const own = (await t.req('POST', '/api/sessions', 'alice', { quizId: quiz.id, label: '' })).json();
+    assert.equal(own.moderatorId, 'mod_alice');
+    assert.equal(own.label, 'Hall 3 · 2:00 PM');
+
+    // title without a hall/time pattern → empty label (as before)
+    const plain = (await t.req('POST', '/api/quizzes', 'alice', sampleQuiz('Plain quiz'))).json();
+    assert.equal((await t.req('POST', '/api/sessions', 'alice', { quizId: plain.id })).json().label, '');
+  } finally {
+    await t.close();
+  }
+});
+
 test('events: CRUD, ownership, list counts, validation', async () => {
   const t = await setup();
   try {
