@@ -1,8 +1,8 @@
 // Cloud 9 server entry. Owned by lead.
 import Fastify from 'fastify';
-import fastifyStatic from '@fastify/static';
+import { registerStatic } from './http/static';
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { loadConfig } from './config';
 import { openRepo } from './db/repo';
 import { createAuth } from './auth/index';
@@ -29,22 +29,7 @@ async function main() {
   await registerRoutes(app, { repo, registry: game.registry, auth, config });
 
   if (existsSync(config.webDist)) {
-    await app.register(fastifyStatic, {
-      root: config.webDist,
-      wildcard: false,
-      setHeaders(res, path) {
-        if (path.includes(`${join('assets', '')}`)) res.setHeader('cache-control', 'public, max-age=31536000, immutable');
-        else res.setHeader('cache-control', 'no-cache');
-      },
-    });
-    // SPA fallback for client routes
-    app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/ws')) {
-        reply.header('cache-control', 'no-cache');
-        return reply.sendFile('index.html');
-      }
-      reply.code(404).send({ error: 'not_found', message: 'Not found' });
-    });
+    await registerStatic(app, config.webDist);
   } else {
     console.warn(`[cloud9] web build not found at ${config.webDist} — API only`);
   }

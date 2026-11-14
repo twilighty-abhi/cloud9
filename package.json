@@ -6,7 +6,7 @@
   "scripts": {
     "dev:server": "tsx watch server/src/index.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "build:web": "vite build --config web/vite.config.ts",
+    "build:web": "vite build --config web/vite.config.ts && node scripts/precompress.mjs dist/web",
     "build:server": "esbuild server/src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.mjs --packages=external",
     "build": "npm run build:web && npm run build:server",
     "start": "node dist/server.mjs",
