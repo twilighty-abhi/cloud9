@@ -8,6 +8,8 @@ import { Room } from './room';
 import { cleanName, checkEmail, dedupeName } from './validate';
 
 export const EVICT_AFTER_MS = 6 * 60 * 60 * 1000;
+/** Default idle time after which an unfinished room with no sockets is dropped from memory (config.roomIdleEvictHours). */
+export const IDLE_EVICT_DEFAULT_HOURS = 24;
 export const SWEEP_EVERY_MS = 10 * 60 * 1000;
 
 export function sha256Hex(s: string): string {
@@ -187,9 +189,19 @@ export class Registry implements GameRegistry {
     return { rooms, sockets };
   }
 
+  /**
+   * Drops rooms from memory (their rows stay in SQLite):
+   *  - FINISHED rooms EVICT_AFTER_MS after they ended;
+   *  - abandoned unfinished rooms (LOBBY / mid-game) with no sockets and no activity for config.roomIdleEvictHours (default 24 h).
+   *    restore() at boot still brings unfinished sessions back.
+   */
   sweep(now = Date.now()): void {
+    const idleMs = (this.config.roomIdleEvictHours ?? IDLE_EVICT_DEFAULT_HOURS) * 60 * 60 * 1000;
     for (const [code, r] of this.rooms) {
-      if (r.state === 'FINISHED' && r.endedAt !== null && now - r.endedAt > EVICT_AFTER_MS) {
+      const finishedOld = r.state === 'FINISHED' && r.endedAt !== null && now - r.endedAt > EVICT_AFTER_MS;
+      const abandoned = r.state !== 'FINISHED' && r.socketCount() === 0 && now - r.lastActivityAt > idleMs;
+      if (finishedOld || abandoned) {
+        if (abandoned) console.log(`[game] evicting idle room ${code} (state ${r.state}, idle ${Math.round((now - r.lastActivityAt) / 3_600_000)} h)`);
         r.dispose(1001);
         this.rooms.delete(code);
       }

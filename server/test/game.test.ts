@@ -614,3 +614,95 @@ test('events: no event → eventName/eventBoard null; quiz emailMode honoured', 
 
 import { createHash as _createHash } from 'node:crypto';
 function sha(s: string) { return _createHash('sha256').update(s).digest('hex'); }
+
+// ───────────── idle eviction (#32) ─────────────
+
+test('sweep: abandoned unfinished rooms (no sockets, no activity for 24 h) are evicted; active / connected ones stay', async (t) => {
+  const HOUR = 3_600_000;
+  const start = Date.UTC(2026, 10, 14, 9, 0, 0);
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const { repo, registry, port, teardown } = await setup();
+  const clients: Client[] = [];
+  try {
+    const mk = (label: string) => registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label, listed: true });
+    const lobby = mk('idle lobby');          // never touched again
+    const mid = mk('idle mid-game');         // started, then abandoned
+    const busy = mk('recent activity');      // activity at +20 h
+    const held = mk('socket open');          // idle but a projector is still connected
+    const done = mk('finished');             // FINISHED rooms keep their own (6 h) rule
+    const midRoom = registry.get(mid.code)!;
+    const j = registry.join(mid.code, { name: 'P' });
+    assert.ok(j.ok);
+    midRoom.modAction('start', -1);
+    midRoom.modAction('close', 0);
+    registry.get(done.code)!.modAction('end', -1);
+    const pres = await connect(port, `role=present&code=${held.code}`);
+    clients.push(pres);
+    await pres.state('LOBBY');
+
+    t.mock.timers.setTime(start + 20 * HOUR);
+    registry.join(busy.code, { name: 'Late' }); // activity → resets its idle clock
+
+    // 23 h: nothing idle long enough (FINISHED rule: 6 h → that one goes)
+    t.mock.timers.setTime(start + 23 * HOUR);
+    registry.sweep();
+    assert.ok(registry.get(lobby.code) && registry.get(mid.code) && registry.get(busy.code) && registry.get(held.code));
+    assert.equal(registry.get(done.code), null);
+
+    // 24 h + 1 min: lobby + mid-game rooms are evicted; persisted state stays in the repo
+    t.mock.timers.setTime(start + 24 * HOUR + 60_000);
+    registry.sweep();
+    assert.equal(registry.get(lobby.code), null);
+    assert.equal(registry.get(mid.code), null);
+    assert.ok(registry.get(busy.code), 'recent activity keeps the room');
+    assert.ok(registry.get(held.code), 'an open socket keeps the room');
+    assert.equal(repo.sessions.get(lobby.id)!.state, 'LOBBY');
+    assert.equal(repo.sessions.get(mid.id)!.state, 'CLOSED');
+    assert.equal(registry.stats().rooms, 2);
+
+    // once the projector disconnects, the idle clock starts from the disconnect
+    pres.close();
+    await pres.closed();
+    for (let i = 0; i < 50 && registry.get(held.code)!.socketCount() > 0; i++) await new Promise((r) => setImmediate(r));
+    t.mock.timers.setTime(start + 47 * HOUR);
+    registry.sweep();
+    assert.ok(registry.get(held.code));
+    t.mock.timers.setTime(start + 48 * HOUR + 2 * 60_000);
+    registry.sweep();
+    assert.equal(registry.get(held.code), null);
+    assert.equal(registry.get(busy.code), null); // last activity at +20 h
+
+    // restore() still brings unfinished sessions back on boot
+    const fresh = new RegistryClass(repo, config);
+    try {
+      assert.equal(fresh.restore(), 4);
+      assert.ok(fresh.get(mid.code));
+    } finally { fresh.shutdown(); }
+  } finally {
+    clients.forEach((c) => c.close());
+    await teardown();
+  }
+});
+
+test('sweep: ROOM_IDLE_EVICT_HOURS config is honoured', async (t) => {
+  const HOUR = 3_600_000;
+  const start = Date.UTC(2026, 10, 14, 9, 0, 0);
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const { loadConfig } = await import('../src/config');
+  assert.equal(loadConfig({ SESSION_SECRET: 'x'.repeat(40), MODERATORS: 'a:b' }).roomIdleEvictHours, 24);
+  assert.equal(loadConfig({ SESSION_SECRET: 'x'.repeat(40), MODERATORS: 'a:b', ROOM_IDLE_EVICT_HOURS: '2' }).roomIdleEvictHours, 2);
+  assert.equal(loadConfig({ SESSION_SECRET: 'x'.repeat(40), MODERATORS: 'a:b', ROOM_IDLE_EVICT_HOURS: 'nope' }).roomIdleEvictHours, 24);
+  assert.equal(loadConfig({ SESSION_SECRET: 'x'.repeat(40), MODERATORS: 'a:b', ROOM_IDLE_EVICT_HOURS: '0' }).roomIdleEvictHours, 24);
+  const registry = new RegistryClass(new FakeRepo(), { ...config, roomIdleEvictHours: 2 });
+  try {
+    const s = registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: false });
+    t.mock.timers.setTime(start + 2 * HOUR - 1000);
+    registry.sweep();
+    assert.ok(registry.get(s.code));
+    t.mock.timers.setTime(start + 2 * HOUR + 1000);
+    registry.sweep();
+    assert.equal(registry.get(s.code), null);
+  } finally {
+    registry.shutdown();
+  }
+});

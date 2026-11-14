@@ -16,6 +16,8 @@ export interface Config {
   webDist: string;            // built frontend directory
   secureCookies: boolean;     // true when publicUrl is https
   telegram: TelegramConfig | null;   // null = Telegram integration off
+  /** Unfinished rooms with no sockets and no activity for this long are dropped from memory (SQLite keeps them). Default 24. */
+  roomIdleEvictHours?: number;
 }
 
 /** MODERATORS="admin:pass:super,anu:pass,rahul:pass" — optional 3rd field "super". Display name = username. */
@@ -55,7 +57,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: env.WEB_DIST ?? resolve('dist/web'),
     secureCookies: publicUrl.startsWith('https://'),
     telegram: parseTelegram(env),
+    roomIdleEvictHours: positiveOr(env.ROOM_IDLE_EVICT_HOURS, 24),
   };
+}
+
+/** Positive finite number from env, else the default. */
+function positiveOr(v: string | undefined, def: number): number {
+  const n = Number(v);
+  return v !== undefined && v.trim() !== '' && Number.isFinite(n) && n > 0 ? n : def;
 }
 
 const list = (v: string | undefined) => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
