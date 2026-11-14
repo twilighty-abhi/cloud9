@@ -33,8 +33,8 @@ async function main() {
       root: config.webDist,
       wildcard: false,
       setHeaders(res, path) {
-        if (path.includes(`${join('assets', '')}`)) res.setHeader('cache-control', 'public, max-age=31536000, immutable');
-        else res.setHeader('cache-control', 'no-cache');
+        if (path.includes(`${join('assets', '')}`)) res.header('cache-control', 'public, max-age=31536000, immutable');
+        else res.header('cache-control', 'no-cache');
       },
     });
     // SPA fallback for client routes
