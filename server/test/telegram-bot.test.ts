@@ -206,6 +206,33 @@ test('/winner private vs group', async () => {
   assert.doesNotMatch(t.last().text!, /anu@x\.test|Quizzes played/);
 });
 
+test('email-like player names are masked in group replies, shown as typed in private (#8)', async () => {
+  const t = setup();
+  const r = t.registry.join(t.s1.code, { name: 'ravi@corp.example', email: 'ravi@x.test' });
+  assert.ok(r.ok);
+  t.repo.updatePlayer((r as any).playerId, { score: 9000 });
+  const group = async (run: () => Promise<unknown>) => { await run(); return t.last().text!; };
+  const outs = [
+    await group(() => t.msg('/leaderboard', { chat: 'group' })),
+    await group(() => t.msg(`/leaderboard ${t.s1.code}`, { chat: 'group' })),
+    await group(() => t.msg('/event', { chat: 'group' })),
+    await group(() => t.msg('/winner', { chat: 'group' })),
+    await group(() => t.cb(`lb:${t.s1.code}`, { chat: 'group' })),
+    await group(() => t.cb(`lbe:${t.ev.id}`, { chat: 'group' })),
+  ];
+  for (const text of outs) {
+    assert.match(text, /\[hidden\]/);
+    assert.doesNotMatch(text, /@|corp\.example|x\.test/);
+  }
+  assert.match(outs[3], /<b>\[hidden\]<\/b> — <b>9000<\/b> points/);
+  await t.msg('/leaderboard');
+  assert.match(t.last().text!, /🥇 ravi@corp\.example &lt;ravi@x\.test&gt; — <b>9000<\/b>/);
+  await t.msg('/winner');
+  assert.match(t.last().text!, /<b>ravi@corp\.example<\/b> — <b>9000<\/b> points/);
+  await t.cb(`lb:${t.s1.code}`);
+  assert.match(t.last().text!, /🥇 ravi@corp\.example &lt;ravi@x\.test&gt;/);
+});
+
 test('/session details', async () => {
   const t = setup();
   await t.msg(`/session ${t.s1.code}`);

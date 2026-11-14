@@ -3,7 +3,7 @@
 import type { CreateCommandRouter, Button, OutMsg } from './contracts';
 import type { SessionRow } from '../contracts';
 import type { SessionSummary, EventDef, EventLeaderEntry, RoomState } from '../../../shared/model';
-import { esc, b, i, code, modName, fmtCode, medal, clip } from './html';
+import { esc, b, i, code, modName, fmtCode, medal, clip, playerName } from './html';
 import { buildExportCsv } from '../http/exportCsv';
 import { csvRow, slugify } from '../util/csv';
 
@@ -154,7 +154,7 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
     `${b(s.label || '—')} · ${esc(s.title)} · ${code(fmtCode(s.code))}\n   ${esc(stateLabel(s))} · ${plural(s.players, 'player')}`;
 
   const eventEntry = (e: EventLeaderEntry, ctx: Ctx, extra = '') =>
-    `${medal(e.rank)} ${esc(e.name)}${ctx.isPrivate && e.email ? ` &lt;${esc(e.email)}&gt;` : ''} — ${b(e.score)}${extra}`;
+    `${medal(e.rank)} ${playerName(e.name, ctx.isPrivate)}${ctx.isPrivate && e.email ? ` &lt;${esc(e.email)}&gt;` : ''} — ${b(e.score)}${extra}`;
 
   // ───────────── outputs ─────────────
   /** Read-only commands, then admin actions (if wired), then help last. */
@@ -232,7 +232,7 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
     const lines = [`🏆 ${b(s.title)} · ${esc(s.label || '—')} · ${code(fmtCode(s.code))}`, `${esc(stateLabel(s))} · ${plural(players.length, 'player')}`, ''];
     if (!players.length) lines.push(i('no players yet'));
     players.slice(0, 10).forEach((p, n) =>
-      lines.push(`${medal(n + 1)} ${esc(p.name)}${ctx.isPrivate && p.email ? ` &lt;${esc(p.email)}&gt;` : ''} — ${b(p.score)}`));
+      lines.push(`${medal(n + 1)} ${playerName(p.name, ctx.isPrivate)}${ctx.isPrivate && p.email ? ` &lt;${esc(p.email)}&gt;` : ''} — ${b(p.score)}`));
     const row: Button[] = [{ text: 'Details', data: `ses:${s.code}` }];
     if (ctx.isPrivate) row.push({ text: '⬇️ CSV', data: `exp:${s.code}` });
     send(ctx, lines.join('\n'), [row]);
@@ -251,7 +251,7 @@ export const createCommandRouter: CreateCommandRouter = ({ cfg, client, sender, 
     if (typeof ev === 'string') return send(ctx, ev);
     const top = repo.eventLeaderboard(ev.id)[0];
     if (!top) return send(ctx, `${b(ev.name)}: no scores yet.`);
-    const lines = [`🥇 ${b(ev.name)} — current #1`, '', `${b(top.name)} — ${b(top.score)} points`];
+    const lines = [`🥇 ${b(ev.name)} — current #1`, '', `<b>${playerName(top.name, ctx.isPrivate)}</b> — ${b(top.score)} points`];
     if (ctx.isPrivate) {
       lines.push(`Email: ${top.email ? esc(top.email) : i('none')}`);
       lines.push(`Quizzes played: ${top.quizzesPlayed}`);
