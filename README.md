@@ -36,7 +36,10 @@ Then pick **one** way to expose it:
 |---|---|
 | **Existing Nginx** on the host | Copy `docker/nginx.conf.example` to `/etc/nginx/sites-available/cloud9`, set `server_name`, enable it, `sudo nginx -t && sudo systemctl reload nginx`, then `sudo certbot --nginx -d quiz.example.com`. The `/ws` block (Upgrade headers, `proxy_read_timeout 3600s`) is required. |
 | **Caddy** (ports 80/443 free) | Set `DOMAIN=` in `.env`, point the DNS A record at the server, then `docker compose --profile caddy up -d --build`. Certificates are automatic. |
-| **Direct IP** (testing only) | In `docker-compose.yml` change the port to `"3000:3000"`, set `PUBLIC_URL=http://<server-ip>:3000`, `docker compose up -d`, open `http://<server-ip>:3000`. Revert before the event (plain HTTP, no Secure cookies). |
+| **SSH tunnel** (testing only, before DNS/TLS) | `ssh -L 3000:127.0.0.1:3000 user@server`, then open `http://localhost:3000` on your laptop. |
+
+Port 3000 must stay bound to `127.0.0.1` (`"127.0.0.1:3000:3000"` in `docker-compose.yml`); never publish it as `"3000:3000"`.
+The app trusts `X-Forwarded-For` only from loopback and private (Docker/LAN) peers by default (`TRUST_PROXY`, see `.env.example`), and the proxy in front of it is what makes per-IP rate limits meaningful.
 
 `PUBLIC_URL` must be the exact URL players open: join links and QR codes are built from it.
 Changing `.env` needs `docker compose up -d` (recreates the container), not just `restart`.
