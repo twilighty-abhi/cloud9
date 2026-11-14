@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { createGame } from '../src/game/index';
 import type { Registry } from '../src/game/registry';
-import { cleanName, checkEmail, dedupeName } from '../src/game/validate';
+import { cleanName, checkEmail, dedupeName, sameDisplayName } from '../src/game/validate';
 import type { AuthService, Game } from '../src/contracts';
 import type { Config } from '../src/config';
 import type { QuizDef } from '../../shared/model';
@@ -470,8 +470,9 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     const room1 = registry.get(s1.code)!;
     assert.equal(room1.activeCount(), 5);
 
-    // rebind by email (case-insensitive): same player, fresh token, no duplicate
-    const again = join(s1.code, 'Someone else', '  ALICE@x.test ');
+    // rebind by email (case-insensitive email + name): same player, fresh token, no duplicate
+    assert.deepEqual(registry.join(s1.code, { name: 'Someone else', email: 'alice@x.test' }), { ok: false, error: 'email_in_use' });
+    const again = join(s1.code, 'ALICE', '  ALICE@x.test ');
     assert.equal(again.rejoined, true);
     assert.equal(again.playerId, alice.playerId);
     assert.equal(again.name, 'Alice');
@@ -480,7 +481,8 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     assert.equal(repo.listPlayers(s1.id).length, 5);
     // rebind works even when joining is closed
     registry.patch(s1.code, { joinOpen: false });
-    assert.equal(join(s1.code, 'Bob', 'bob@x.test').rejoined, true);
+    const bob2 = join(s1.code, 'Bob', 'bob@x.test');
+    assert.equal(bob2.rejoined, true);
     assert.deepEqual(registry.join(s1.code, { name: 'New', email: 'new@x.test' }), { ok: false, error: 'join_closed' });
     registry.patch(s1.code, { joinOpen: true });
 
@@ -490,7 +492,7 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
 
     // sockets: the rebound token works
     const pa = await connect(port, `role=player&code=${s1.code}&token=${again.token}`);
-    const pb = await connect(port, `role=player&code=${s1.code}&token=${bob.token}`);
+    const pb = await connect(port, `role=player&code=${s1.code}&token=${bob2.token}`); // bob's first token was replaced
     const pres1 = await connect(port, `role=present&code=${s1.code}`);
     const mod1 = await connect(port, `role=mod&code=${s1.code}`, 'c9_session=mod1');
     clients.push(pa, pb, pres1, mod1);
@@ -579,7 +581,7 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
       // rebind-by-email works after restore too
       const room2r = fresh.get(s2.code)!;
       assert.ok(room2r);
-      const rj = fresh.join(s2.code, { name: 'x', email: 'eve@x.test' });
+      const rj = fresh.join(s2.code, { name: 'eve', email: 'eve@x.test' });
       assert.ok(rj.ok && rj.rejoined && rj.playerId === eve.playerId);
       assert.equal(repo.listPlayers(s2.id).find((p) => p.id === eve.playerId)!.tokenHash, sha(rj.ok ? rj.token : ''));
     } finally {
@@ -590,6 +592,101 @@ test('events: cumulative board across sessions, top-3 for players, rebind by ema
     await teardown();
     repo.close();
   }
+});
+
+test('email rebind: open socket → email_in_use, name must match, old token invalidated, joinOpen respected', async () => {
+  const { registry, port, teardown, repo } = await setup();
+  const clients: Client[] = [];
+  try {
+    const s = registry.createSession({ quiz: makeQuiz(), moderatorId: 'mod1', event: null, label: '', listed: true });
+    const room = registry.get(s.code)!;
+    const j = (name: string, email?: string) => registry.join(s.code, email === undefined ? { name } : { name, email });
+    const anu1 = j('Anu', 'anu1@x.test');
+    const anu2 = j('Anu', 'anu2@x.test'); // display name "Anu (2)"
+    assert.ok(anu1.ok && anu2.ok);
+    assert.equal(anu2.ok && anu2.name, 'Anu (2)');
+    const id2 = anu2.ok ? anu2.playerId : '';
+    const tok2 = anu2.ok ? anu2.token : '';
+
+    // (a) the original device is connected → email_in_use, never echoes name/id
+    const c1 = await connect(port, `role=player&code=${s.code}&token=${tok2}`);
+    clients.push(c1);
+    await c1.state('LOBBY');
+    assert.equal(room.openSocketCount(room.players.get(id2)!), 1);
+    const busy = j('Anu', 'anu2@x.test');
+    assert.deepEqual(busy, { ok: false, error: 'email_in_use' });
+    assert.equal(repo.players.get(id2)!.tokenHash, sha(tok2)); // unchanged
+
+    // score is kept across the rebind
+    room.modAction('start', -1);
+    assert.ok(room.answer(room.players.get(id2)!, 0, 1).ok);
+    const scoreBefore = room.players.get(id2)!.score;
+    assert.ok(scoreBefore > 0);
+
+    // (b) original device gone: name mismatch → email_in_use; match ignoring case + " (2)" → rebind
+    c1.close();
+    await c1.closed();
+    for (let i = 0; i < 50 && room.players.get(id2)!.sockets.size > 0; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(room.openSocketCount(room.players.get(id2)!), 0);
+    assert.deepEqual(j('Bob', 'anu2@x.test'), { ok: false, error: 'email_in_use' });
+    const rj = j('anu', 'ANU2@x.test');
+    assert.ok(rj.ok && rj.rejoined && rj.playerId === id2 && rj.name === 'Anu (2)');
+    const tok3 = rj.ok ? rj.token : '';
+    assert.equal(room.players.get(id2)!.score, scoreBefore);
+    assert.equal(repo.players.get(id2)!.score, scoreBefore);
+    assert.equal(repo.players.get(id2)!.tokenHash, sha(tok3));
+    assert.equal(room.activeCount(), 2);
+
+    // (c) the old token no longer opens a socket; the new one does
+    assert.equal(room.findByTokenHash(sha(tok2)), null);
+    const old = await connect(port, `role=player&code=${s.code}&token=${tok2}`);
+    clients.push(old);
+    assert.equal(await old.closed(), 4401);
+    const c3 = await connect(port, `role=player&code=${s.code}&token=${tok3}`);
+    clients.push(c3);
+    const st = await c3.next((m) => m.t === 'state');
+    assert.equal(st.me.id, id2);
+    // exact display name also matches (once the device is gone again)
+    assert.deepEqual(j('Anu (2)', 'anu2@x.test'), { ok: false, error: 'email_in_use' }); // c3 still open
+    c3.close();
+    await c3.closed();
+    for (let i = 0; i < 50 && room.players.get(id2)!.sockets.size > 0; i++) await new Promise((r) => setTimeout(r, 10));
+
+    // (d) joining closed: a disconnected player with a matching name may come back; others see join_closed
+    registry.patch(s.code, { joinOpen: false });
+    assert.deepEqual(j('Mallory', 'anu2@x.test'), { ok: false, error: 'join_closed' });
+    assert.deepEqual(j('New', 'new@x.test'), { ok: false, error: 'join_closed' });
+    const back = j('Anu (2)', 'anu2@x.test');
+    assert.ok(back.ok && back.rejoined && back.playerId === id2);
+    const c4 = await connect(port, `role=player&code=${s.code}&token=${back.ok ? back.token : ''}`);
+    clients.push(c4);
+    await c4.next((m) => m.t === 'state');
+    assert.deepEqual(j('Anu', 'anu2@x.test'), { ok: false, error: 'join_closed' }); // connected + closed
+    registry.patch(s.code, { joinOpen: true });
+
+    // kicked stays kicked
+    assert.ok(anu1.ok);
+    room.kick(anu1.ok ? anu1.playerId : '');
+    assert.deepEqual(j('Anu', 'anu1@x.test'), { ok: false, error: 'kicked' });
+  } finally {
+    clients.forEach((c) => c.close());
+    await teardown();
+  }
+});
+
+test('sameDisplayName: case-insensitive, ignores dedupe suffix (incl. truncated bases)', () => {
+  assert.equal(sameDisplayName('anu', 'Anu'), true);
+  assert.equal(sameDisplayName('ANU', 'Anu (2)'), true);
+  assert.equal(sameDisplayName('Anu (2)', 'Anu (2)'), true);
+  assert.equal(sameDisplayName('Anu', 'Anu (3)'), true);
+  assert.equal(sameDisplayName('Anuj', 'Anu (2)'), false);
+  assert.equal(sameDisplayName('Bob', 'Anu'), false);
+  assert.equal(sameDisplayName('Anu', 'Anu K'), false);
+  const long = 'y'.repeat(24);
+  const deduped = dedupeName(long, new Set([long]));
+  assert.equal(sameDisplayName(long, deduped), true);
+  assert.equal(sameDisplayName('y'.repeat(23) + 'z', deduped), true); // same truncated base: indistinguishable, accepted
+  assert.equal(sameDisplayName('y'.repeat(10), deduped), false);
 });
 
 test('events: no event → eventName/eventBoard null; quiz emailMode honoured', async () => {

@@ -56,6 +56,7 @@ export class FakeRegistry implements GameRegistry {
     if (!r) return { ok: false, error: 'not_found' };
     if (r.summary.state === 'FINISHED') return { ok: false, error: 'finished' };
     if (req.email === 'kicked@x.test') return { ok: false, error: 'kicked' };
+    if (req.email === 'inuse@x.test') return { ok: false, error: 'email_in_use' };
     const prev = req.email ? r.emails.get(req.email.toLowerCase()) : undefined;
     if (prev) return { ok: true, playerId: prev, token: randomBytes(16).toString('base64url'), name: req.name, rejoined: true };
     if (!r.summary.joinOpen) return { ok: false, error: 'join_closed' };

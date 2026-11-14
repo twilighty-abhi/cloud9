@@ -78,12 +78,17 @@ export interface SessionPatch { label?: string; listed?: boolean; joinOpen?: boo
 // GET  /api/public/sessions     → 200 PublicSession[]  (listed && state !== FINISHED; cached ~2s)
 // GET  /api/play/:code          → 200 PlayInfo | 404
 // POST /api/play/:code/join     body JoinReq → 200 JoinRes | 400/403/404/409/429 ApiError
-//        errors: not_found, finished, join_closed, room_full, email_required, invalid_name, invalid_email, rate_limited, kicked
+//        errors: not_found, finished, join_closed, room_full, email_required, invalid_name, invalid_email, rate_limited, kicked, email_in_use (409)
 export interface PlayInfo { code: string; eventName: string | null; title: string; label: string; state: RoomState; emailMode: EmailMode /* EFFECTIVE mode: 'required' if event.emailRequired */; joinOpen: boolean }
 export interface JoinReq { name: string; email?: string }
 export interface JoinRes { playerId: string; token: string; name: string; rejoined: boolean }
-//   name may get a suffix: "Anu (2)". If a non-kicked player with the SAME email already exists in this session, the server
-//   REBINDS to that player (issues a fresh token, keeps score) and returns rejoined=true. A kicked email stays kicked (403 kicked).
+//   name may get a suffix: "Anu (2)". If a non-kicked player with the SAME email already exists in this session:
+//   - if that player has an open connection → 409 email_in_use (the existing name/id is never returned);
+//   - else, if the submitted name matches their display name (case-insensitive, ignoring the " (2)" suffix), the server
+//     REBINDS to that player (fresh token, the previous token stops working, keeps score) and returns rejoined=true —
+//     allowed even when joining is closed (a disconnected player coming back);
+//   - else → 409 email_in_use (403 join_closed while joining is closed).
+//   A kicked email stays kicked (403 kicked).
 
 // GET /healthz → 200 { ok: true, rooms: number, sockets: number, uptimeSec: number, rssMb: number }
 

@@ -29,11 +29,29 @@ export function checkEmail(raw: unknown, mode: EmailMode): EmailCheck {
 export function dedupeName(name: string, taken: Set<string>): string {
   if (!taken.has(name.toLowerCase())) return name;
   for (let n = 2; n < 100000; n++) {
-    const suffix = ` (${n})`;
-    const chars = [...name];
-    const base = chars.length + suffix.length > DEFAULTS.nameMax ? chars.slice(0, DEFAULTS.nameMax - suffix.length).join('').trimEnd() : name;
-    const candidate = base + suffix;
+    const candidate = withSuffix(name, n);
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
   return name; // unreachable in practice
+}
+
+/** "Anu" + 2 → "Anu (2)", truncating the base so the result stays ≤ nameMax chars (same rule dedupeName uses). */
+function withSuffix(name: string, n: number): string {
+  const suffix = ` (${n})`;
+  const chars = [...name];
+  const base = chars.length + suffix.length > DEFAULTS.nameMax ? chars.slice(0, DEFAULTS.nameMax - suffix.length).join('').trimEnd() : name;
+  return base + suffix;
+}
+
+/**
+ * True if `submitted` (a cleaned name) is the name that produced the existing display name, case-insensitively,
+ * ignoring the " (N)" dedupe suffix: "anu" matches "Anu" and "Anu (2)". Used to allow an email rebind.
+ */
+export function sameDisplayName(submitted: string, existing: string): boolean {
+  const s = submitted.toLowerCase();
+  const e = existing.toLowerCase();
+  if (s === e) return true;
+  const m = / \((\d+)\)$/.exec(e);
+  if (!m) return false;
+  return withSuffix(s, Number(m[1])) === e;
 }

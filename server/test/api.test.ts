@@ -505,6 +505,12 @@ test('events: quizzes eventId filter + invalid_event, sessions carry event, lead
     const j2 = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'Anu', email: 'ANU@x.test' }, '10.9.0.1');
     assert.equal(j2.json().rejoined, true);
     assert.equal(j2.json().playerId, j1.json().playerId);
+    // email already playing elsewhere (fake registry sentinel) → 409 email_in_use, no name/id echoed
+    const j3 = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'Mallory', email: 'inuse@x.test' }, '10.9.0.1');
+    assert.equal(j3.statusCode, 409);
+    assert.equal(j3.json().error, 'email_in_use');
+    assert.match(j3.json().message, /already playing on another device/);
+    assert.deepEqual(Object.keys(j3.json()).sort(), ['error', 'message']);
     const jk = await t.req('POST', `/api/play/${s1.code}/join`, undefined, { name: 'K', email: 'kicked@x.test' }, '10.9.0.1');
     assert.equal(jk.statusCode, 403);
     assert.equal(jk.json().error, 'kicked');

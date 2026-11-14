@@ -22,6 +22,7 @@ function friendly(e: unknown): { field?: 'name' | 'email'; msg: string; fatal?: 
       case 'invalid_email': return { field: 'email', msg: "That email doesn't look right. Check it and try again." };
       case 'invalid_name': return { field: 'name', msg: `Enter a name, up to ${DEFAULTS.nameMax} characters.` };
       case 'kicked': return { msg: 'You were removed from this quiz.', fatal: 'kicked' };
+      case 'email_in_use': return { field: 'email', msg: 'This email is already playing on another device. Close it there first, or ask the host.' };
       case 'rate_limited': return { msg: 'Too many tries from this network. Wait a minute and try again.' };
     }
     if (e.status === 404) return { msg: "We couldn't find this quiz.", fatal: 'not_found' };

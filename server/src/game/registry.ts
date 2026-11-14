@@ -5,7 +5,7 @@ import type { PlayInfo, JoinReq, SessionPatch } from '../../../shared/api';
 import type { GameRegistry, JoinResult, Repo, SessionRow, PlayerRow } from '../contracts';
 import type { Config } from '../config';
 import { Room } from './room';
-import { cleanName, checkEmail, dedupeName } from './validate';
+import { cleanName, checkEmail, dedupeName, sameDisplayName } from './validate';
 
 export const EVICT_AFTER_MS = 6 * 60 * 60 * 1000;
 export const SWEEP_EVERY_MS = 10 * 60 * 1000;
@@ -109,12 +109,19 @@ export class Registry implements GameRegistry {
     if (r.state === 'FINISHED') return { ok: false, error: 'finished' };
     const name = cleanName(req?.name);
     const em = checkEmail(req?.email, r.emailMode);
-    // Same email already in this room → rebind to that player (fresh token, keeps name/score); kicked stays kicked.
-    // Checked before join_closed / room_full: the person is already a member of this room.
+    // Same email already in this room (emails are not verified, so a rebind must not let someone take over a seat):
+    //  - kicked → 'kicked';
+    //  - the player still has an OPEN socket → 'email_in_use' (the original device is still playing);
+    //  - no open socket and the submitted name matches the display name (case-insensitive, ignoring " (2)") → rebind:
+    //    fresh token, old token invalidated, score kept. Allowed even when joining is closed (a disconnected player coming back);
+    //  - otherwise 'email_in_use' ('join_closed' while joining is closed). Never echoes the existing name or id.
     if (name && em.ok && em.email) {
       const existing = r.findByEmail(em.email);
       if (existing) {
         if (existing.kicked) return { ok: false, error: 'kicked' };
+        if (r.openSocketCount(existing) > 0 || !sameDisplayName(name, existing.name)) {
+          return { ok: false, error: r.joinOpen ? 'email_in_use' : 'join_closed' };
+        }
         const token = randomBytes(24).toString('base64url');
         const tokenHash = sha256Hex(token);
         this.repo.updatePlayer(existing.id, { tokenHash });
