@@ -41,7 +41,38 @@ Then pick **one** way to expose it:
 `PUBLIC_URL` must be the exact URL players open: join links and QR codes are built from it.
 Changing `.env` needs `docker compose up -d` (recreates the container), not just `restart`.
 
-Update to a new version: `git pull && docker compose up -d --build`. Live rooms are restored from SQLite on boot.
+### Update & rollback
+
+Each release is built as its own image, `cloud9:<git-sha>`, and also tagged `cloud9:latest`. The previous images stay
+on the box, so a bad release can be undone in seconds without rebuilding (no npm / apt needed).
+
+```bash
+cd /opt/cloud9
+docker images cloud9                                  # note the current tag (your rollback target)
+git pull
+export IMAGE_TAG=$(git rev-parse --short HEAD)
+docker compose build app                              # builds cloud9:$IMAGE_TAG; the running container is untouched
+docker tag cloud9:$IMAGE_TAG cloud9:latest            # so a later plain `docker compose up -d` keeps this release
+docker compose up -d app                              # swap (a few seconds; live rooms restore from SQLite)
+docker compose ps && curl -s localhost:3000/healthz
+```
+
+Rollback to the previous release:
+
+```bash
+IMAGE_TAG=<old-sha> docker compose up -d --no-build app
+docker tag cloud9:<old-sha> cloud9:latest             # make it stick for later `docker compose up -d`
+git checkout <old-sha>                                # optional: keep the checkout in line with what runs
+```
+
+- Database migrations are additive and idempotent, so older code runs fine on a newer DB. Take a backup before
+  updating anyway.
+- The build uses CPU on the same box that serves players: do not update during a live session. Freeze deploys on
+  event day unless it is a fix you need.
+- Old images: keep the last 2–3, remove older ones with `docker image rm cloud9:<sha>`. Never `docker system prune`
+  on a shared server.
+- Without `IMAGE_TAG` everything still works as before (`cloud9:latest`, `docker compose up -d --build`), but then
+  there is no previous image to roll back to.
 
 Resource limits (compose): 2 GB RAM, 2 CPUs, Node heap up to 1.5 GB (real use ~130 MB at 250 players), logs rotated at 10 MB × 3.
 
