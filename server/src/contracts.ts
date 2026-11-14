@@ -115,7 +115,8 @@ export interface Repo {
 // Survives server restarts.
 
 export interface AuthService {
-  verifyLogin(username: string, password: string): Me | null;
+  /** Async (scrypt on the threadpool). Throws LoginThrottledError (auth/index) when busy or the username is locked out. */
+  verifyLogin(username: string, password: string): Promise<Me | null>;
   issueCookieValue(me: Me): string;
   moderatorFromCookieHeader(cookieHeader: string | undefined): Me | null;  // used by the WS upgrade (Agent A)
   moderatorFromRequest(req: FastifyRequest): Me | null;

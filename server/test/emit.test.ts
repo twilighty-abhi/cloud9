@@ -363,7 +363,7 @@ test('game: timer auto-close emits question.closed with actor null', async () =>
 
 test('ws: moderator username from the WS auth is the actor for start / kick', async () => {
   const fakeAuth: AuthService = {
-    verifyLogin: () => null, issueCookieValue: () => '', moderatorFromRequest: () => null, getModerator: () => null,
+    verifyLogin: async () => null, issueCookieValue: () => '', moderatorFromRequest: () => null, getModerator: () => null,
     moderatorFromCookieHeader(h) {
       const m = /c9_session=([a-z0-9]+)/.exec(h ?? '');
       return m ? { id: m[1], username: m[1], displayName: m[1], isSuper: m[1] === 'root' } : null;

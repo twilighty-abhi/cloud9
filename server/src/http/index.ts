@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import { z } from 'zod';
 import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard, SessionPatch } from '../../../shared/api';
 import type { RegisterRoutes, RouteDeps, SessionRow } from '../contracts';
-import { COOKIE_NAME, SESSION_TTL_MS } from '../auth/index';
+import { COOKIE_NAME, LoginThrottledError, SESSION_TTL_MS } from '../auth/index';
 import { createRateLimiter } from '../util/rateLimit';
 import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
@@ -165,7 +165,12 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   api.post('/api/auth/login', async (req, reply) => {
     if (!loginLimiter.hit(req.ip)) fail(429, 'rate_limited', 'Too many login attempts, try again in a minute');
     const body = parse(loginSchema, req.body);
-    const me = auth.verifyLogin(body.username, body.password) ?? fail(401, 'invalid_credentials', 'Wrong username or password');
+    const found = await auth.verifyLogin(body.username, body.password).catch((e: unknown): never => {
+      if (!(e instanceof LoginThrottledError)) throw e;
+      reply.header('retry-after', String(e.retryAfterSec));
+      return fail(429, e.reason === 'busy' ? 'login_busy' : 'login_locked', e.message);
+    });
+    const me = found ?? fail(401, 'invalid_credentials', 'Wrong username or password');
     reply.setCookie(COOKIE_NAME, auth.issueCookieValue(me), {
       httpOnly: true,
       sameSite: 'lax',

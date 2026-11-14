@@ -143,4 +143,6 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
-`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
+`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container.
+Moderator login is throttled per IP (`LOGIN_RATE_PER_MIN`), to 4 password checks in flight (more → 429, retry in a second),
+and per username: 10 wrong passwords within 15 minutes lock that username for the rest of the window (429; restart clears it). Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
