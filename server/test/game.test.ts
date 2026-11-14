@@ -18,7 +18,7 @@ const config: Config = {
 };
 
 const fakeAuth: AuthService = {
-  verifyLogin: () => null,
+  verifyLogin: async () => null,
   issueCookieValue: () => '',
   moderatorFromRequest: () => null,
   getModerator: () => null,
