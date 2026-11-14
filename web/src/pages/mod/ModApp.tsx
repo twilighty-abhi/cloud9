@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import type { Me } from '../../../../shared/api';
 import { HttpError } from '../../lib/api';
 import { match } from '../../lib/router';
-import { fixturePath } from '../../dev/modFixtures';
+import { devFx } from '../../lib/fixtures';
 import { fixture, load, errMsg, Logo } from './common';
 import { Login } from './Login';
 import { Dashboard } from './Dashboard';
@@ -16,7 +16,7 @@ import './mod.css';
 type AuthState = { kind: 'loading' } | { kind: 'out' } | { kind: 'in'; me: Me } | { kind: 'error'; message: string };
 
 export function ModApp(props: { path: string }) {
-  const path = fixture ? fixturePath(fixture) : props.path;
+  const path = fixture ? devFx()!.fixturePath(fixture) : props.path;
   const [auth, setAuth] = useState<AuthState>({ kind: 'loading' });
 
   const check = () => {

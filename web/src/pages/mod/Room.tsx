@@ -4,13 +4,13 @@ import type { Me, SessionSummary } from '../../../../shared/api';
 import type { HostSnapshot, ModAction } from '../../../../shared/protocol';
 import type { BoardTop } from '../../../../shared/model';
 import { useRoom, useTick, type RoomConn } from '../../lib/ws';
-import { hostFixture } from '../../dev/modFixtures';
+import { devFx } from '../../lib/fixtures';
 import { fixture, load, mutate, errMsg, Link, Logo, Chip, Switch, LETTERS, qrSrc, fmtNum } from './common';
 
 type Conn = RoomConn<HostSnapshot>;
 
 function useFixtureConn(): Conn | null {
-  const [snap] = useState(() => (fixture ? hostFixture(fixture) : null));
+  const [snap] = useState(() => (fixture ? devFx()!.hostFixture(fixture) : null));
   if (!snap) return null;
   return { snap, status: 'open', fatal: null, lastError: null, now: () => Date.now(), send: (m) => { console.info('[fixture] send', m); return true; } };
 }

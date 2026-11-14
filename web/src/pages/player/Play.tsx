@@ -5,14 +5,14 @@ import type { StoredPlayer } from '../../lib/storage';
 import { navigate } from '../../lib/router';
 import { useRoom } from '../../lib/ws';
 import type { PlayerSnapshot } from '../../../../shared/protocol';
-import { fixtureName, playerFixture, joinFixture, joinEventFixture } from '../../dev/playerFixtures';
+import { fixtureName, devFx } from '../../lib/fixtures';
 import { JoinForm } from './Join';
 import { Message, Shell, LiveShell } from './parts';
 import { RoomView, Kicked } from './screens';
 import type { ConnLike } from './screens';
 
 export function Play(props: { code: string }) {
-  const fx = fixtureName();
+  const fx = import.meta.env.DEV ? fixtureName() : null; // dev-only fixtures (#14)
   if (fx) return <PlayFixture name={fx} code={props.code} />;
   return <PlayLive code={props.code} />;
 }
@@ -61,6 +61,7 @@ function Connected(props: { code: string; player: StoredPlayer; onUnauthorized: 
 }
 
 function PlayFixture({ name, code }: { name: string; code: string }) {
+  const { playerFixture, joinFixture, joinEventFixture } = devFx()!;
   const [snap] = useState(() => playerFixture(name));
   if (name === 'join-form') return <JoinForm code={joinFixture.code} fixtureInfo={joinFixture} onJoined={() => {}} />;
   if (name === 'join-email-required') return <JoinForm code={joinEventFixture.code} fixtureInfo={joinEventFixture} onJoined={() => {}} />;
