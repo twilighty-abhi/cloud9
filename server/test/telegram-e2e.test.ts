@@ -482,7 +482,7 @@ test('telegram e2e: admin actions', { timeout: 300_000 }, async (t) => {
 
     // ── tap quiz → preview with Create / Cancel ──
     const prev = await tap(555, ADMIN, `nsq:${quiz.id}`, (c) => toAdmin(c) && buttonsOf(c).includes(`nsy:${quiz.id}`));
-    check('nsq: → preview with ✅ Create (nsy:) and ✖ Cancel (cxl)', !!prev.hit && buttonsOf(prev.hit).includes('cxl') && textOf(prev.hit).includes('When AI Gets a Body'),
+    check('nsq: → preview with ✅ Create (nsy:) and ✖ Cancel (cxl:nsy:)', !!prev.hit && buttonsOf(prev.hit).includes(`cxl:nsy:${quiz.id}`) && textOf(prev.hit).includes('When AI Gets a Body'),
       prev.hit ? `${textOf(prev.hit)} ${buttonsOf(prev.hit).join('|')}` : 'no preview');
     check('nsq: preview creates nothing yet', (await sessionsOfQuiz()).length === 0);
 
@@ -530,7 +530,7 @@ test('telegram e2e: admin actions', { timeout: 300_000 }, async (t) => {
 
     // ── /joining off → confirm → join closed ──
     const jo = await say(555, ADMIN, `/joining ${code} off`, (c) => toAdmin(c) && buttonsOf(c).includes(`acy:joff:${code}`));
-    check('/joining <code> off → confirm button acy:joff:<code>', !!jo && buttonsOf(jo).includes('cxl'), jo ? buttonsOf(jo).join('|') : 'no confirm');
+    check('/joining <code> off → confirm button acy:joff:<code>', !!jo && buttonsOf(jo).includes(`cxl:acy:joff:${code}`), jo ? buttonsOf(jo).join('|') : 'no confirm');
     check('/joining off: nothing changes before the tap', (await tryJoin(code, 'Early', 'early@example.com')).status === 200);
     const joY = await tap(555, ADMIN, `acy:joff:${code}`, toAdmin);
     check('acy:joff → reply', !!joY.hit);
@@ -557,8 +557,8 @@ test('telegram e2e: admin actions', { timeout: 300_000 }, async (t) => {
     check('after show: listed again', await eventually(async () => (await publicCodes()).includes(code), wired ? 6000 : 300));
 
     // ── cancel ──
-    const hd2 = await say(555, ADMIN, `/hide ${code}`, (c) => toAdmin(c) && buttonsOf(c).includes('cxl'));
-    const cx = await tap(555, ADMIN, 'cxl', (c) => toAdmin(c) && /cancel/i.test(textOf(c)));
+    const hd2 = await say(555, ADMIN, `/hide ${code}`, (c) => toAdmin(c) && buttonsOf(c).includes(`cxl:acy:hide:${code}`));
+    const cx = await tap(555, ADMIN, `cxl:acy:hide:${code}`, (c) => toAdmin(c) && /cancel/i.test(textOf(c)));
     check('cxl → "Cancelled"', !!hd2 && !!cx.hit, cx.hit ? `${cx.hit.method}: ${textOf(cx.hit)}` : 'no "Cancelled"');
     await sleep(2500);   // past the public-list cache
     check('cxl → session still listed', (await publicCodes()).includes(code));

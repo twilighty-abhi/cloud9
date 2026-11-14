@@ -46,7 +46,11 @@ const playersIn = (n: number) => (n === 1 ? '1 player is in.' : `${n} players ar
 
 export const createActions: CreateActions = ({ cfg, client, sender, repo, registry, config, bus }) => {
   const admins = new Set(cfg.adminIds.map(String));
-  /** key `${chatId}|${data}` → expiry + preview message id (when known). */
+  /**
+   * Armed confirmations, keyed by chat + op + target (`${chatId}|nsy|<quizId>`, `${chatId}|end|<code>`), so a
+   * Cancel disarms the action no matter which message armed it. messageId (the message the preview replaced, when
+   * known) is kept only so legacy bare `cxl` buttons can still disarm by message.
+   */
   const pending = new Map<string, { exp: number; messageId: number | null }>();
 
   const log = (msg: string, err?: unknown) => {
@@ -77,7 +81,21 @@ export const createActions: CreateActions = ({ cfg, client, sender, repo, regist
   };
 
   // ───────────── confirmations ─────────────
-  const pkey = (ctx: TgCtx, data: string) => `${ctx.chatId}|${data}`;
+  /** Confirm data → `{ op, target }`: 'nsy:<quizId>' → nsy/<quizId>; 'acy:<op>:<code>' → <op>/<code>; else null. */
+  const confirmOf = (data: string): { op: string; target: string } | null => {
+    if (data.startsWith('nsy:')) { const target = data.slice(4); return target ? { op: 'nsy', target } : null; }
+    const m = /^acy:([a-z]+):(\d{6})$/.exec(data);
+    return m && OPS.has(m[1]) ? { op: m[1], target: m[2] } : null;
+  };
+  const pkey = (ctx: TgCtx, data: string) => {
+    const c = confirmOf(data);
+    return c ? `${ctx.chatId}|${c.op}|${c.target}` : `${ctx.chatId}|?|${data}`;
+  };
+  /** Cancel button for a confirm: carries the confirm so Cancel can disarm it (bare 'cxl' if it would not fit). */
+  const cancelBtn = (data: string): Button => {
+    const d = `cxl:${data}`;
+    return { text: '✖ Cancel', data: Buffer.byteLength(d) <= 64 ? d : 'cxl' };
+  };
   const prune = () => {
     const now = Date.now();
     for (const [k, v] of pending) if (v.exp <= now) pending.delete(k);
@@ -143,7 +161,7 @@ export const createActions: CreateActions = ({ cfg, client, sender, repo, regist
     if (live) lines.push('', `⚠️ Already live: code ${code(fmtCode(live.code))}`);
     const data = `nsy:${quiz.id}`;
     arm(ctx, data, messageId);
-    await reply(ctx, messageId, lines.join('\n'), [[{ text: '✅ Create', data }, { text: '✖ Cancel', data: 'cxl' }]]);
+    await reply(ctx, messageId, lines.join('\n'), [[{ text: '✅ Create', data }, cancelBtn(data)]]);
   };
 
   const doNewSession = async (ctx: TgCtx, args: string) => {
@@ -218,7 +236,7 @@ export const createActions: CreateActions = ({ cfg, client, sender, repo, regist
     const data = `acy:${op}:${r.code}`;
     arm(ctx, data, messageId);
     // From an inline button (act:) we answer with a new message so the session message keeps its links.
-    send(ctx, `${q}\nCode: ${code(fmtCode(r.code))}`, [[{ text: '✅ Yes', data }, { text: '✖ Cancel', data: 'cxl' }]]);
+    send(ctx, `${q}\nCode: ${code(fmtCode(r.code))}`, [[{ text: '✅ Yes', data }, cancelBtn(data)]]);
   };
 
   const doOp = async (ctx: TgCtx, op: Op, c: string, fromId: string, messageId: number | null) => {
@@ -283,13 +301,24 @@ export const createActions: CreateActions = ({ cfg, client, sender, repo, regist
       if (!admins.has(String(fromId))) return true; // swallow: never act for non-admins
       try {
         if (kind === 'cxl') {
+          // 'cxl:<confirm data>' disarms that action in this chat, whichever message armed it.
+          const target = data.startsWith('cxl:') ? confirmOf(data.slice(4)) : null;
+          if (target) pending.delete(pkey(ctx, data.slice(4)));
+          // legacy bare 'cxl': disarm what was armed from the tapped message
           if (messageId !== null) for (const [k, v] of pending) if (v.messageId === messageId && k.startsWith(`${ctx.chatId}|`)) pending.delete(k);
           await reply(ctx, messageId, 'Cancelled.');
           return true;
         }
         if (kind === 'nsq') { await createPreview(ctx, data.slice(4), messageId); return true; }
         if (kind === 'nsy') {
-          if (!take(ctx, data)) { await reply(ctx, messageId, EXPIRED); return true; }
+          if (!take(ctx, data)) {
+            // A repeated/consumed Create: if the quiz is live, say so in a new message (the tapped message may be the
+            // "Done ✓" one with the links, so don't overwrite it); otherwise the button really expired.
+            const live = liveOfQuiz(data.slice(4));
+            if (live) send(ctx, `Already live: code ${code(fmtCode(live.code))} · ${esc(live.label || '—')}`, [[{ text: 'Details', data: `ses:${live.code}` }]]);
+            else await reply(ctx, messageId, EXPIRED);
+            return true;
+          }
           await doCreate(ctx, data.slice(4), fromId, messageId);
           return true;
         }
