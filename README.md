@@ -143,4 +143,8 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
+`ALLOWED_ORIGINS` (comma-separated): extra browser Origins allowed to open moderator WebSockets besides `PUBLIC_URL`;
+add any secondary domain moderators use (e.g. `https://cloud9.abhiramnj.com`). A page on the same host as the request is
+also accepted, but only if the proxy passes the `Host` header through. A moderator room screen opened from any other Origin
+shows "unauthorized". Players and projector screens are not affected.
 `PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
