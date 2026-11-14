@@ -93,7 +93,7 @@ test('/newsession lists quizzes of the default event as buttons; filter; one mat
   assert.ok(!t.btnData(m.buttons).includes('nsq:qz9')); // other event
   await t.msg('/newsession KEYNOTE');
   assert.match(t.last().text!, /Create a lobby for <b>Main Hall · 11:55 AM–12:25 PM · Keynote Quiz<\/b>\?/);
-  assert.deepEqual(t.btnData(t.last().buttons), ['nsy:qz2', 'cxl']);
+  assert.deepEqual(t.btnData(t.last().buttons), ['nsy:qz2', 'cxl:nsy:qz2']);
   await t.msg('/newsession zzz');
   assert.match(t.last().text!, /No quizzes match/);
   assert.ok(t.router.commands().some((c) => c.command === 'newsession'));
@@ -107,7 +107,7 @@ test('nsq → preview (edited) → nsy creates lobby owned by the quiz moderator
   const p = t.lastEdit();
   assert.equal(p.message_id, 77);
   assert.equal(p.text, "Create a lobby for <b>Hall 3 · 2:00–2:30 PM · Serverless</b>?\nOwner: hall3 · Label: Hall 3 · 2:00 PM · Players can join as soon as it's created.");
-  assert.deepEqual(t.kbData(p), ['nsy:qz1', 'cxl']);
+  assert.deepEqual(t.kbData(p), ['nsy:qz1', 'cxl:nsy:qz1']);
   await t.cb('nsy:qz1');
   await tick();
   const rooms = [...t.registry.rooms.values()];
@@ -128,9 +128,13 @@ test('nsq → preview (edited) → nsy creates lobby owned by the quiz moderator
   assert.equal(t.photos.length, 1);
   assert.ok(t.photos[0].bytes > 100);
   assert.equal(t.photos[0].caption, `Scan to join · ${s.code.slice(0, 3)} ${s.code.slice(3)}`);
-  // replaying the confirm is refused (one use)
+  // replaying the confirm is refused (one use): the quiz is live, so a NEW message says so and the
+  // "Done ✓" message with the links is left alone (#12)
+  const editsBefore = t.edits().length;
   await t.cb('nsy:qz1');
-  assert.match(t.lastEdit().text, /expired/);
+  assert.equal(t.edits().length, editsBefore);
+  assert.equal(t.last().text, `Already live: code <code>${s.code.slice(0, 3)} ${s.code.slice(3)}</code> · Hall 3 · 2:00 PM`);
+  assert.deepEqual(t.btnData(t.last().buttons), [`ses:${s.code}`]);
   assert.equal(t.registry.rooms.size, 1);
 });
 
@@ -166,7 +170,7 @@ test('/joining off → confirm → patch + session.updated', async () => {
   const t = withRoom();
   await t.msg(`/joining ${t.code} off`);
   assert.equal(t.last().text, `Close joining for <b>Hall 3 · 2:00–2:30 PM · Serverless</b> (Hall 3)? 3 players are in.\nCode: <code>${t.code.slice(0, 3)} ${t.code.slice(3)}</code>`);
-  assert.deepEqual(t.btnData(t.last().buttons), [`acy:joff:${t.code}`, 'cxl']);
+  assert.deepEqual(t.btnData(t.last().buttons), [`acy:joff:${t.code}`, `cxl:acy:joff:${t.code}`]);
   assert.equal(t.registry.summary(t.code)!.joinOpen, true); // nothing yet
   await t.cb(`acy:joff:${t.code}`);
   await tick();
@@ -236,10 +240,72 @@ test('expired / unknown confirms refused; cxl cancels', async () => {
   assert.equal(t.registry.endSessionCalls.length, 0);
 
   await t.cb('nsq:qz2', ADMIN, 90);
-  await t.cb('cxl', ADMIN, 90);
+  await t.cb('cxl', ADMIN, 90); // legacy bare cxl still disarms by message
   assert.equal(t.lastEdit().text, 'Cancelled.');
   assert.deepEqual(t.kbData(t.lastEdit()), []);
   await t.cb('nsy:qz2', ADMIN, 90); // cancel disarmed it
+  assert.match(t.lastEdit().text, /expired/);
+  assert.equal(t.registry.rooms.size, 1);
+});
+
+test('Cancel disarms the confirm for that chat + action, whichever message armed it (#12)', async () => {
+  const t = withRoom();
+  // /end from a command (no originating message) → Cancel on the confirm message
+  await t.msg(`/end ${t.code}`);
+  const cancel = t.btnData(t.last().buttons)[1];
+  assert.equal(cancel, `cxl:acy:end:${t.code}`);
+  await t.cb(cancel, ADMIN, 501);
+  assert.equal(t.lastEdit().text, 'Cancelled.');
+  await t.cb(`acy:end:${t.code}`, ADMIN, 502); // any other still-visible Yes for the same action
+  assert.match(t.lastEdit().text, /expired/);
+  assert.equal(t.registry.endSessionCalls.length, 0);
+
+  // act: button armed it; two previews visible; Cancel on one disarms the action for both
+  await t.cb(`act:end:${t.code}`, ADMIN, 600);
+  await t.cb(`act:end:${t.code}`, ADMIN, 601);
+  await t.cb(`cxl:acy:end:${t.code}`, ADMIN, 700);
+  await t.cb(`acy:end:${t.code}`, ADMIN, 701);
+  assert.match(t.lastEdit().text, /expired/);
+  assert.equal(t.registry.endSessionCalls.length, 0);
+
+  // other actions / other chats stay armed
+  await t.msg(`/hide ${t.code}`);
+  await t.msg(`/end ${t.code}`);
+  await t.cb(`cxl:acy:end:${t.code}`, ADMIN, 800);
+  const other = { chatId: '222', threadId: null, isPrivate: true };
+  await t.actions.callback(other, `cxl:acy:hide:${t.code}`, String(ADMIN), 1);
+  await t.cb(`acy:hide:${t.code}`, ADMIN, 801);
+  await tick();
+  assert.equal(t.registry.summary(t.code)!.listed, false);
+
+  // nsy: preview from nsq, cancel via cxl:nsy: from a different message
+  await t.cb('nsq:qz2', ADMIN, 900);
+  await t.cb('cxl:nsy:qz2', ADMIN, 901);
+  await t.cb('nsy:qz2', ADMIN, 900);
+  assert.match(t.lastEdit().text, /expired/);
+  assert.equal(t.registry.rooms.size, 1);
+  // a garbage cancel only answers Cancelled
+  await t.cb('cxl:acy:nope:1', ADMIN, 902);
+  assert.equal(t.lastEdit().text, 'Cancelled.');
+});
+
+test('consumed nsy: → "Already live" when the quiz is live, "expired" otherwise (#12)', async () => {
+  const t = setup();
+  await t.cb('nsy:qz2'); // never armed, nothing live
+  assert.equal(t.lastEdit().text, 'This button expired — run the command again.');
+  await t.cb('nsq:qz2', ADMIN, 40);
+  await t.cb('nsy:qz2', ADMIN, 40);
+  const code = [...t.registry.rooms.keys()][0];
+  const sent = t.out.length;
+  await t.cb('nsy:qz2', ADMIN, 40); // double tap
+  assert.equal(t.out.length, sent + 1);
+  assert.match(t.last().text!, new RegExp(`^Already live: code <code>${code.slice(0, 3)} ${code.slice(3)}</code>`));
+  assert.deepEqual(t.btnData(t.last().buttons), [`ses:${code}`]);
+  assert.match(t.lastEdit().text, /^Done ✓/); // the Done message was not overwritten
+  assert.equal(t.registry.rooms.size, 1);
+  // once it has finished, a stale Create button is just expired
+  t.registry.rooms.get(code)!.summary.state = 'FINISHED';
+  await t.cb('nsy:qz2', ADMIN, 41);
   assert.match(t.lastEdit().text, /expired/);
   assert.equal(t.registry.rooms.size, 1);
 });
