@@ -124,7 +124,7 @@ Target bundle sizes: participant JS < 40 KB gzipped, CSS < 10 KB.
 - Answers are queued in memory and flushed in **one transaction every 100 ms**.
 - Players never wait on the DB; acknowledgements come from in-memory state.
 - Settings: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON`.
-- Backup: `sqlite3 data/cloud9.db ".backup data/backup-$(date +%s).db"`, or copy the volume after the event.
+- Backup: `docker compose exec -T app node -e "require('better-sqlite3')('/data/cloud9.db').backup('/data/backup-'+Date.now()+'.db').then(()=>console.log('ok'))"` (the image has no `sqlite3` CLI), or copy the volume after `docker compose stop app`.
 - **Fallback:** data access is isolated in `src/db/` behind a small repository interface, so switching to Postgres is a contained change if needed.
 
 ---
@@ -560,7 +560,7 @@ Rules for the agents:
 **Before doors (T-60 min)**
 - `docker compose ps` all healthy; `/healthz` OK
 - Each moderator logs in, imports their quiz, does a 2-question dry run
-- Back up the DB: `docker compose exec app sqlite3 /data/cloud9.db ".backup /data/pre-event.db"`
+- Back up the DB: `docker compose exec -T app node -e "require('better-sqlite3')('/data/cloud9.db').backup('/data/pre-event.db').then(()=>console.log('ok'))"`
 
 **During**
 - Watch: `docker stats` and `docker compose logs -f app`
