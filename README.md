@@ -12,7 +12,7 @@ npm run dev:web        # Vite dev server for the UI (proxies /api and /ws to :30
 npm test               # unit + integration tests
 ```
 
-Production build: `npm run build && npm start` (serves `dist/web` + `dist/server.mjs`).
+Production build: `npm run build && NODE_ENV=production npm start` (serves `dist/web` + `dist/server.mjs`; needs `MODERATORS` and a 32+ char `SESSION_SECRET`).
 
 ## Deploy on the Hetzner box
 
@@ -143,4 +143,7 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
-`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
+`PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container.
+With `NODE_ENV=production` (set by the Dockerfile) the server **refuses to start** if `MODERATORS` is missing or
+`SESSION_SECRET` is shorter than 32 characters; the `admin:admin` / random-secret fallbacks are for local development only.
+Non-numeric or non-positive numeric settings (`MAX_PLAYERS_PER_ROOM`, `JOIN_RATE_PER_MIN`, `LOGIN_RATE_PER_MIN`, `PORT`) fall back to their defaults with a warning. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).
