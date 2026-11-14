@@ -16,6 +16,8 @@ export interface Config {
   webDist: string;            // built frontend directory
   secureCookies: boolean;     // true when publicUrl is https
   telegram: TelegramConfig | null;   // null = Telegram integration off
+  /** Epoch ms from SESSION_NOT_BEFORE: moderator cookies issued before it are rejected (revoke all sessions). */
+  sessionNotBefore?: number;
 }
 
 /** MODERATORS="admin:pass:super,anu:pass,rahul:pass" — optional 3rd field "super". Display name = username. */
@@ -32,6 +34,23 @@ export function parseModerators(raw: string): ModeratorConfig[] {
       if (!/^[a-z0-9_.-]{1,32}$/.test(username) || !password) throw new Error(`Invalid MODERATORS entry: "${username}"`);
       return { id: `mod_${username}`, username, password, displayName: username, isSuper };
     });
+}
+
+/**
+ * SESSION_NOT_BEFORE = epoch seconds (e.g. `date +%s`) or an ISO date/time. Returns epoch ms, or undefined when unset.
+ * Throws on an unparseable value (an operator asked for a revocation — don't silently ignore it).
+ * A future value is clamped to `now` so it can't lock every moderator out until then.
+ */
+export function parseSessionNotBefore(raw: string | undefined, now = Date.now()): number | undefined {
+  const v = (raw ?? '').trim();
+  if (!v) return undefined;
+  const ms = /^\d+$/.test(v) ? Number(v) * 1000 : /^\d{4}-\d{2}-\d{2}/.test(v) ? Date.parse(v) : NaN;
+  if (!Number.isFinite(ms)) throw new Error(`[config] SESSION_NOT_BEFORE="${raw}" is not epoch seconds or an ISO date (e.g. 2026-11-14T10:00:00Z)`);
+  if (ms > now) {
+    console.warn('[config] SESSION_NOT_BEFORE is in the future — using the current time instead');
+    return now;
+  }
+  return ms;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -55,6 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: env.WEB_DIST ?? resolve('dist/web'),
     secureCookies: publicUrl.startsWith('https://'),
     telegram: parseTelegram(env),
+    sessionNotBefore: parseSessionNotBefore(env.SESSION_NOT_BEFORE),
   };
 }
 

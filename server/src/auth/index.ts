@@ -6,7 +6,7 @@ import type { Config } from '../config';
 import type { AuthService, Repo } from '../contracts';
 
 export const COOKIE_NAME = 'c9_session';
-export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;   // 24 h; revoke earlier with SESSION_NOT_BEFORE or a new SESSION_SECRET
 
 interface Account { me: Me; salt: Buffer; hash: Buffer }
 
@@ -56,8 +56,11 @@ export function createAuth(config: Config, repo: Repo): AuthService {
     const expected = Buffer.from(sign(payload), 'base64url');
     if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) return null;
     try {
-      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { id?: unknown; exp?: unknown };
+      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { id?: unknown; exp?: unknown; iat?: unknown };
       if (typeof data.id !== 'string' || typeof data.exp !== 'number' || data.exp < Date.now()) return null;
+      // Revocation: tokens issued before SESSION_NOT_BEFORE are rejected. Pre-`iat` tokens count as issued at 0.
+      const iat = typeof data.iat === 'number' ? data.iat : 0;
+      if (config.sessionNotBefore !== undefined && iat < config.sessionNotBefore) return null;
       return byId.get(data.id)?.me ?? null; // removed moderators are logged out
     } catch {
       return null;
@@ -73,7 +76,8 @@ export function createAuth(config: Config, repo: Repo): AuthService {
       return ok && acc ? acc.me : null;
     },
     issueCookieValue(me) {
-      const payload = Buffer.from(JSON.stringify({ id: me.id, exp: Date.now() + SESSION_TTL_MS })).toString('base64url');
+      const iat = Date.now();
+      const payload = Buffer.from(JSON.stringify({ id: me.id, iat, exp: iat + SESSION_TTL_MS })).toString('base64url');
       return `${payload}.${sign(payload)}`;
     },
     moderatorFromCookieHeader(cookieHeader) {
