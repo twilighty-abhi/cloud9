@@ -13,6 +13,12 @@ server {
     server_name quiz.example.com;
 
     client_max_body_size 4m;        # CSV/JSON quiz imports
+    server_tokens off;              # don't advertise the Nginx version
+
+    # Security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy) come from the app.
+    # HSTS is sent by the app when PUBLIC_URL is https://. If you'd rather set it in Nginx, put this in the TLS
+    # (listen 443) server block instead, and don't send it from both:
+    #   add_header Strict-Transport-Security "max-age=15552000" always;
 
     # WebSocket endpoint
     location /ws {
