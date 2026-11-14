@@ -23,3 +23,8 @@ export function getLastEmail(): string {
 export function setLastEmail(e: string) {
   try { localStorage.setItem('c9:lastEmail', e); } catch { /* ignore */ }
 }
+/** Shared device (#20): forget this room's player and the remembered name/email, so the next person starts clean. */
+export function forgetIdentity(code?: string) {
+  if (code) clearPlayer(code);
+  try { localStorage.removeItem('c9:lastName'); localStorage.removeItem('c9:lastEmail'); } catch { /* ignore */ }
+}

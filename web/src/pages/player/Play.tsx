@@ -1,6 +1,6 @@
 // Participant entry: /join/:code and /play/:code. Join form if no stored token, else live room over WebSocket.
 import { useEffect, useState } from 'preact/hooks';
-import { getPlayer, clearPlayer } from '../../lib/storage';
+import { getPlayer, clearPlayer, forgetIdentity } from '../../lib/storage';
 import type { StoredPlayer } from '../../lib/storage';
 import { navigate } from '../../lib/router';
 import { useRoom } from '../../lib/ws';
@@ -8,7 +8,7 @@ import type { PlayerSnapshot } from '../../../../shared/protocol';
 import { fixtureName, playerFixture, joinFixture, joinEventFixture } from '../../dev/playerFixtures';
 import { JoinForm } from './Join';
 import { Message, Shell, LiveShell } from './parts';
-import { RoomView, Kicked } from './screens';
+import { RoomView, Kicked, NotMe } from './screens';
 import type { ConnLike } from './screens';
 
 export function Play(props: { code: string }) {
@@ -31,12 +31,13 @@ function PlayLive({ code }: { code: string }) {
   }
   return (
     <Connected key={player.token} code={code} player={player}
+      onNotMe={() => { forgetIdentity(code); setP(null); navigate(`/join/${code}`, true); }}
       onUnauthorized={() => { clearPlayer(code); setP(null); navigate(`/join/${code}`, true); }}
       onNotFound={() => { clearPlayer(code); setGone(true); }} />
   );
 }
 
-function Connected(props: { code: string; player: StoredPlayer; onUnauthorized: () => void; onNotFound: () => void }) {
+function Connected(props: { code: string; player: StoredPlayer; onNotMe: () => void; onUnauthorized: () => void; onNotFound: () => void }) {
   const { code, player } = props;
   const conn = useRoom<PlayerSnapshot>({ role: 'player', code, token: player.token });
 
@@ -53,11 +54,12 @@ function Connected(props: { code: string; player: StoredPlayer; onUnauthorized: 
         <div class="c9-p-center c9-p-stack">
           <div class="c9-p-spinner" aria-hidden="true" />
           <p class="c9-muted">{conn.status === 'reconnecting' ? 'Trying to reconnect…' : `Connecting as ${player.name}…`}</p>
+          <NotMe name={player.name} onNotMe={props.onNotMe} />
         </div>
       </LiveShell>
     );
   }
-  return <RoomView snap={conn.snap} conn={conn} />;
+  return <RoomView snap={conn.snap} conn={conn} onNotMe={props.onNotMe} />;
 }
 
 function PlayFixture({ name, code }: { name: string; code: string }) {

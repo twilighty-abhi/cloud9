@@ -1,6 +1,6 @@
 // Participant room screens, rendered from the server PlayerSnapshot. One action per screen.
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { PlayerSnapshot, ClientMsg } from '../../../../shared/protocol';
 import { useTick } from '../../lib/ws';
 import type { ConnStatus } from '../../lib/ws';
@@ -8,14 +8,43 @@ import { linkClick } from '../../lib/router';
 import { LiveShell, Message, fmtNum } from './parts';
 import { IconCheck, IconX, IconMinus, IconLock, IconClock, IconUsers } from './icons';
 
-export interface ConnLike { status: ConnStatus; now: () => number; send: (m: ClientMsg) => boolean }
+export interface ConnLike { status: ConnStatus; now: () => number; send: (m: ClientMsg) => boolean; lastError?: { code: string; message: string } | null }
 type Picked = { qIndex: number; choice: number } | null;
+/** Why the last tap did not count (#20): 'late' = server said too_late; 'failed' = error or no ack within ACK_TIMEOUT_MS. */
+type AnswerFail = { qIndex: number; kind: 'late' | 'failed' } | null;
+
+/** How long "Sending…" may show (while connected) before we unlock and ask for another tap. */
+export const ACK_TIMEOUT_MS = 5000;
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike }) {
+export function RoomView({ snap, conn, onNotMe }: { snap: PlayerSnapshot; conn: ConnLike; onNotMe?: () => void }) {
   const [picked, setPicked] = useState<Picked>(null);
+  const [fail, setFail] = useState<AnswerFail>(null);
+  const [serverHas, setServerHas] = useState<number | null>(null); // qIndex the server says we already answered
   const q = snap.question;
+  const awaitingAck = !!picked && !snap.myAnswer && snap.state === 'QUESTION' && !!q && q.qIndex === picked.qIndex && serverHas !== picked.qIndex;
+
+  // A server error after a tap means the answer did not count (#20). Errors that arrived before the tap are ignored.
+  const errSeen = useRef(conn.lastError);
+  useEffect(() => {
+    const e = conn.lastError;
+    if (!e || e === errSeen.current) return;
+    errSeen.current = e;
+    if (!awaitingAck || !picked) return;
+    if (e.code === 'already_answered') { setServerHas(picked.qIndex); return; } // the server has an answer from us; keep "Locked in"
+    setPicked(null);
+    setFail({ qIndex: picked.qIndex, kind: e.code === 'too_late' ? 'late' : 'failed' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn.lastError]);
+
+  // No ack within ACK_TIMEOUT_MS while connected: unlock so the player can tap again (never "Sending…" forever).
+  useEffect(() => {
+    if (!awaitingAck || conn.status !== 'open' || !picked) return;
+    const qi = picked.qIndex;
+    const id = setTimeout(() => { setPicked(null); setFail({ qIndex: qi, kind: 'failed' }); }, ACK_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [awaitingAck, conn.status, picked]);
 
   // If the tap happened while offline (or the socket dropped before the ack), resend once we're back.
   useEffect(() => {
@@ -26,18 +55,21 @@ export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike 
 
   const answer = (choice: number) => {
     if (!q) return;
+    errSeen.current = conn.lastError ?? null;
+    setFail(null);
     setPicked({ qIndex: q.qIndex, choice });
     try { navigator.vibrate?.(30); } catch { /* not supported */ }
     conn.send({ t: 'answer', qIndex: q.qIndex, choice });
   };
 
   const myChoice = snap.myAnswer ? snap.myAnswer.choice : picked && q && picked.qIndex === q.qIndex ? picked.choice : null;
+  const qFail = fail && q && fail.qIndex === q.qIndex && !snap.myAnswer ? fail.kind : null;
 
   let body;
   let tone: string | undefined;
   switch (snap.state) {
-    case 'LOBBY': body = <Lobby snap={snap} />; break;
-    case 'QUESTION': body = q ? <Question snap={snap} conn={conn} myChoice={myChoice} onAnswer={answer} /> : <Lobby snap={snap} />; break;
+    case 'LOBBY': body = <Lobby snap={snap} onNotMe={onNotMe} />; break;
+    case 'QUESTION': body = q ? <Question snap={snap} conn={conn} myChoice={myChoice} fail={qFail} onAnswer={answer} /> : <Lobby snap={snap} onNotMe={onNotMe} />; break;
     case 'CLOSED': body = <Closed snap={snap} myChoice={myChoice} />; break;
     case 'REVEAL': {
       const r = snap.reveal;
@@ -54,7 +86,7 @@ export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike 
   );
 }
 
-function Lobby({ snap }: { snap: PlayerSnapshot }) {
+function Lobby({ snap, onNotMe }: { snap: PlayerSnapshot; onNotMe?: () => void }) {
   return (
     <div class="c9-p-lobby">
       <div class="c9-p-breathe" aria-hidden="true">
@@ -66,11 +98,24 @@ function Lobby({ snap }: { snap: PlayerSnapshot }) {
       <p class="c9-p-lead">Waiting for the host to start</p>
       {snap.label && <p class="c9-muted c9-p-small">{snap.label}</p>}
       <p class="c9-muted c9-p-small c9-p-tip">Keep this page open. Questions appear here on their own.</p>
+      {onNotMe && <NotMe name={snap.me.name} onNotMe={onNotMe} />}
     </div>
   );
 }
 
-function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; conn: ConnLike; myChoice: number | null; onAnswer: (c: number) => void }) {
+/** "Playing as <name> · Not you?" for shared devices (#20). Clears this device's identity for the room. */
+export function NotMe({ name, onNotMe }: { name: string; onNotMe: () => void }) {
+  const click = () => {
+    if (confirm(`Leave this quiz as ${name} on this device? ${name}'s points stay with ${name}; you can then join with your own name.`)) onNotMe();
+  };
+  return (
+    <p class="c9-muted c9-p-small c9-p-notme">
+      Playing as <strong>{name}</strong> · <button type="button" class="c9-p-link" onClick={click}>Not you?</button>
+    </p>
+  );
+}
+
+function Question({ snap, conn, myChoice, fail, onAnswer }: { snap: PlayerSnapshot; conn: ConnLike; myChoice: number | null; fail: 'late' | 'failed' | null; onAnswer: (c: number) => void }) {
   const q = snap.question!;
   const limit = Math.max(1000, q.timeLimitSec * 1000);
   const remaining = Math.max(0, q.endsAt - conn.now());
@@ -78,7 +123,8 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
   const frac = Math.min(1, remaining / limit);
   const secs = Math.ceil(remaining / 1000);
   const locked = myChoice !== null;
-  const timeUp = remaining <= 0 && !locked;
+  const late = fail === 'late';
+  const timeUp = remaining <= 0 && !locked && !late;
   const urgent = secs <= 5;
 
   return (
@@ -103,12 +149,12 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
         </div>
       ) : (
         <>
-          <div class={`c9-p-opts ${locked ? 'c9-p-opts--locked' : ''}`} role="group" aria-label="Answers">
+          <div class={`c9-p-opts ${locked || late ? 'c9-p-opts--locked' : ''}`} role="group" aria-label="Answers">
             {q.options.map((opt, i) => {
               const mine = myChoice === i;
               return (
                 <button key={i} type="button" class={`c9-p-opt c9-p-opt--${i} ${mine ? 'is-mine' : ''}`}
-                  disabled={locked} aria-pressed={mine} onClick={() => onAnswer(i)}>
+                  disabled={locked || late} aria-pressed={mine} onClick={() => onAnswer(i)}>
                   <span class="c9-p-opt__key" aria-hidden="true">{mine ? <IconCheck size={20} stroke={3} /> : LETTERS[i]}</span>
                   <span class="c9-p-opt__text"><span class="c9-sr">{LETTERS[i]}: </span>{opt}</span>
                 </button>
@@ -118,7 +164,19 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
           {locked && (
             <p class="c9-p-locked" role="status">
               <IconLock size={18} />
-              <span><strong>Locked in.</strong> {snap.myAnswer ? 'Waiting for the others…' : 'Sending…'}</span>
+              <span><strong>Locked in.</strong> {snap.myAnswer ? 'Waiting for the others…' : conn.status === 'open' ? 'Sending…' : 'Sending when you’re back online…'}</span>
+            </p>
+          )}
+          {!locked && late && (
+            <p class="c9-p-locked c9-p-locked--error" role="alert">
+              <IconClock size={18} />
+              <span><strong>Too late</strong> — answer not counted</span>
+            </p>
+          )}
+          {!locked && fail === 'failed' && (
+            <p class="c9-p-locked c9-p-locked--error" role="alert">
+              <IconX size={18} />
+              <span><strong>Couldn't send</strong> — tap again</span>
             </p>
           )}
         </>

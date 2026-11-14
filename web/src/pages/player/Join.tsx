@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import type { PlayInfo, JoinReq, JoinRes } from '../../../../shared/api';
 import { DEFAULTS } from '../../../../shared/model';
 import { get, post, HttpError } from '../../lib/api';
-import { setPlayer, getLastName, getLastEmail, setLastName, setLastEmail } from '../../lib/storage';
+import { setPlayer, getLastName, getLastEmail, setLastName, setLastEmail, forgetIdentity } from '../../lib/storage';
 import type { StoredPlayer } from '../../lib/storage';
 import { Message, Shell } from './parts';
 
@@ -41,6 +41,8 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ field?: 'name' | 'email'; msg: string } | null>(null);
   const [retry, setRetry] = useState(0);
+  // Name/email remembered from an earlier join on this device (#20): offer a one-tap reset for shared devices.
+  const [remembered, setRemembered] = useState(() => getLastName().slice(0, DEFAULTS.nameMax));
 
   useEffect(() => {
     if (props.fixtureInfo) return;
@@ -113,6 +115,12 @@ export function JoinForm(props: { code: string; fixtureInfo?: PlayInfo; onJoined
           <h1 class="c9-p-join__title">{info.title}</h1>
           {info.label && <p class="c9-p-join__label">{info.label}</p>}
         </div>
+        {remembered && name === remembered && (
+          <p class="c9-muted c9-p-small c9-p-notme--join">
+            Filled in from <strong>{remembered}</strong> on this device · <button type="button" class="c9-p-link"
+              onClick={() => { forgetIdentity(); setName(''); setEmail(''); setRemembered(''); document.getElementById('c9-p-name')?.focus(); }}>Not you?</button>
+          </p>
+        )}
         <div class="yy-field">
           <label class="yy-label" for="c9-p-name">Your name</label>
           <input id="c9-p-name" class="yy-input c9-p-input" type="text" autoComplete="nickname" autoFocus
