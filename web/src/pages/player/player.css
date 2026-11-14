@@ -92,6 +92,11 @@
 .c9-p-locked { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px; border-radius: var(--radius-lg);
   background: var(--yy-bg-muted); font-size: 16px; color: var(--yy-text-secondary); }
 .c9-p-locked strong { color: var(--yy-text); }
+.c9-p-locked--error { background: var(--yy-danger-bg); color: var(--yy-danger-fg); }
+.c9-p-locked--error strong { color: inherit; }
+.c9-p-notme { margin-top: var(--space-4); }
+.c9-p-link { background: none; border: 0; padding: 4px 2px; font: inherit; font-weight: 600; color: var(--yy-text); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.c9-p-link:focus-visible { outline: 2px solid var(--yy-text); outline-offset: 2px; border-radius: 4px; }
 
 .c9-p-panel { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-2); padding: var(--space-8) var(--space-4);
   border: 1px solid var(--yy-border); border-radius: var(--radius-xl); }

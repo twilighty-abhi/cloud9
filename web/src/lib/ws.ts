@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ClientMsg, ServerMsg, PlayerSnapshot, HostSnapshot } from '../../../shared/protocol';
 import { WS_CLOSE } from '../../../shared/protocol';
+import { ClockSync } from './clock';
 
 export type ConnStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 export type Fatal = null | 'not_found' | 'unauthorized' | 'kicked';
@@ -34,7 +35,7 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
   const [fatal, setFatal] = useState<Fatal>(null);
   const [lastError, setLastError] = useState<RoomConn<S>['lastError']>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const offsetRef = useRef(0);
+  const clockRef = useRef<ClockSync>(new ClockSync());
   const snapRef = useRef<S | null>(null);
   const key = params ? JSON.stringify(params) : '';
 
@@ -47,6 +48,9 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
     // Half-open sockets (phone slept / switched network) can look OPEN for a long time; track liveness ourselves.
     let lastMsgAt = Date.now();
     const STALE_MS = 50_000;
+    // Round-trip timing for the clock offset (#20): one ping in flight at a time.
+    let pingSentAt: number | null = null;
+    const sendPing = (ws: WebSocket) => { pingSentAt = Date.now(); ws.send('{"t":"ping"}'); };
     snapRef.current = null;
     setSnap(null); setFatal(null); setStatus('connecting');
 
@@ -63,11 +67,13 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
       let firstState = true; // a new socket's first snapshot is authoritative even if its v is lower (server clock moved back across a restart)
       ws.onopen = () => {
         attempt = 0; lastMsgAt = Date.now(); setStatus('open');
+        clockRef.current.resetRtt();
+        try { sendPing(ws); } catch { /* */ } // RTT-compensated offset right away
         clearInterval(pingTimer);
         pingTimer = setInterval(() => {
           if (wsRef.current !== ws || ws.readyState !== 1) return;
           if (Date.now() - lastMsgAt > STALE_MS) { setStatus('reconnecting'); connect(); return; } // no pong for 2+ pings
-          ws.send('{"t":"ping"}');
+          sendPing(ws);
         }, 20000);
       };
       ws.onmessage = (ev) => {
@@ -79,7 +85,7 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
           case 'state': {
             if (!firstState && cur && typeof (m as any).v === 'number' && (m as any).v < cur.v) return;
             firstState = false;
-            offsetRef.current = (m as any).serverNow - Date.now();
+            clockRef.current.addUntimed((m as any).serverNow, Date.now()); // used only until the first pong
             const { t, ...rest } = m as any;
             apply(rest as S);
             break;
@@ -93,9 +99,13 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
           case 'ack':
             if (cur && cur.role === 'player' && cur.question && cur.question.qIndex === m.qIndex) apply({ ...cur, myAnswer: { choice: m.choice } });
             break;
-          case 'pong':
-            offsetRef.current = m.serverNow - Date.now();
+          case 'pong': {
+            const at = Date.now();
+            if (pingSentAt !== null) clockRef.current.addPong(m.serverNow, pingSentAt, at);
+            else clockRef.current.addUntimed(m.serverNow, at);
+            pingSentAt = null;
             break;
+          }
           case 'kicked':
             setFatal('kicked'); stopped = true;
             break;
@@ -162,7 +172,7 @@ export function useRoom<S extends Snap>(params: Record<string, string> | null): 
 
   return {
     snap, status, fatal, lastError,
-    now: () => Date.now() + offsetRef.current,
+    now: () => Date.now() + clockRef.current.offset(),
     send: (m) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== 1) return false;
