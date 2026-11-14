@@ -82,6 +82,9 @@ const JOIN_ERRORS: Record<string, [number, string]> = {
   kicked: [403, 'You were removed from this quiz'],
 };
 
+export const SMALL_BODY_LIMIT = 16 * 1024;
+export const LARGE_BODY_LIMIT = 2_000_000;
+
 export const registerRoutes: RegisterRoutes = async (app: FastifyInstance, deps: RouteDeps) => {
   await app.register(async (api) => {
     await api.register(fastifyCookie);
@@ -94,6 +97,10 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   const joinUrl = (code: string) => `${config.publicUrl}/join/${code}`;
   const joinLimiter = createRateLimiter({ max: envInt('JOIN_RATE_PER_MIN', 1000), windowMs: 60_000 });
   const loginLimiter = createRateLimiter({ max: envInt('LOGIN_RATE_PER_MIN', 5), windowMs: 60_000 });
+
+  // Body limits: anonymous/small JSON routes get 16 KB; only quiz create/update/import get the 2 MB needed for CSV/JSON.
+  const small = { bodyLimit: SMALL_BODY_LIMIT };
+  const large = { bodyLimit: LARGE_BODY_LIMIT };
 
   api.setErrorHandler((err: any, req, reply) => {
     if (err instanceof HttpError) return reply.code(err.status).send({ error: err.code, message: err.message });
@@ -162,7 +169,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   });
 
   // ───────────── auth ─────────────
-  api.post('/api/auth/login', async (req, reply) => {
+  api.post('/api/auth/login', small, async (req, reply) => {
     if (!loginLimiter.hit(req.ip)) fail(429, 'rate_limited', 'Too many login attempts, try again in a minute');
     const body = parse(loginSchema, req.body);
     const me = auth.verifyLogin(body.username, body.password) ?? fail(401, 'invalid_credentials', 'Wrong username or password');
@@ -176,7 +183,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return me;
   });
 
-  api.post('/api/auth/logout', async (_req, reply) => {
+  api.post('/api/auth/logout', small, async (_req, reply) => {
     reply.clearCookie(COOKIE_NAME, { path: '/', httpOnly: true, sameSite: 'lax', secure: config.secureCookies });
     return { ok: true };
   });
@@ -203,7 +210,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return TEMPLATE_CSV;
   });
 
-  api.post('/api/quizzes', async (req, reply) => {
+  api.post('/api/quizzes', large, async (req, reply) => {
     const me = requireMe(req);
     const input = parse(quizBodySchema, req.body);
     const eventId = resolveEventId(input.eventId, null);
@@ -224,7 +231,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return reply.code(201).send(quiz);
   });
 
-  api.post('/api/quizzes/import', async (req, reply) => {
+  api.post('/api/quizzes/import', large, async (req, reply) => {
     const me = requireMe(req);
     const body = parse(importSchema, req.body);
     const eventId = resolveEventId(body.eventId, null);
@@ -259,7 +266,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return loadOwnedQuiz(me, req.params.id);
   });
 
-  api.put<{ Params: { id: string } }>('/api/quizzes/:id', async (req) => {
+  api.put<{ Params: { id: string } }>('/api/quizzes/:id', large, async (req) => {
     const me = requireMe(req);
     const existing = loadOwnedQuiz(me, req.params.id);
     const input = parse(quizBodySchema, req.body);
@@ -278,7 +285,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return quiz;
   });
 
-  api.delete<{ Params: { id: string } }>('/api/quizzes/:id', async (req) => {
+  api.delete<{ Params: { id: string } }>('/api/quizzes/:id', small, async (req) => {
     const me = requireMe(req);
     const quiz = loadOwnedQuiz(me, req.params.id);
     repo.deleteQuiz(req.params.id);
@@ -287,7 +294,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   });
 
   // ───────────── sessions (moderator) ─────────────
-  api.post('/api/sessions', async (req, reply) => {
+  api.post('/api/sessions', small, async (req, reply) => {
     const me = requireMe(req);
     const body = parse(createSessionSchema, req.body);
     const quiz = loadOwnedQuiz(me, body.quizId);
@@ -322,7 +329,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return repo.listEvents().map((e): EventListItem => ({ ...e, liveSessions: live.get(e.id) ?? 0 }));
   });
 
-  api.post('/api/events', async (req, reply) => {
+  api.post('/api/events', small, async (req, reply) => {
     const me = requireMe(req);
     const input = parse(eventInputSchema, req.body);
     const now = Date.now();
@@ -350,7 +357,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return { event, quizzes, sessions };
   });
 
-  api.put<{ Params: { id: string } }>('/api/events/:id', async (req) => {
+  api.put<{ Params: { id: string } }>('/api/events/:id', small, async (req) => {
     const me = requireMe(req);
     const existing = loadEvent(req.params.id);
     if (!canAccess(me, existing.moderatorId)) fail(403, 'forbidden', 'Only the event creator can edit this event');
@@ -367,7 +374,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return event;
   });
 
-  api.delete<{ Params: { id: string } }>('/api/events/:id', async (req) => {
+  api.delete<{ Params: { id: string } }>('/api/events/:id', small, async (req) => {
     const me = requireMe(req);
     const existing = loadEvent(req.params.id);
     if (!canAccess(me, existing.moderatorId)) fail(403, 'forbidden', 'Only the event creator can delete this event');
@@ -398,7 +405,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return reply.send('\uFEFF' + lines.join('\r\n') + '\r\n');
   });
 
-  api.patch('/api/sessions/:code', async (req) => {
+  api.patch('/api/sessions/:code', small, async (req) => {
     const me = requireMe(req);
     const code = codeParam(req);
     const body = parse(sessionPatchSchema, req.body);
@@ -490,7 +497,7 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
     return info;
   });
 
-  api.post('/api/play/:code/join', async (req) => {
+  api.post('/api/play/:code/join', small, async (req) => {
     if (!joinLimiter.hit(req.ip)) fail(429, 'rate_limited', 'Too many join attempts, please wait a minute');
     const code = codeParam(req);
     const body = parse(joinSchema, req.body, 'invalid_name');
