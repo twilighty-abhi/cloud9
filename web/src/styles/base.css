@@ -48,3 +48,6 @@ h1, h2, h3, h4 { font-weight: 700; letter-spacing: -0.025em; }
 .c9-ccd-hero__line { font-family: var(--font-display); font-weight: 600; font-size: 28px; line-height: 1.05; letter-spacing: -0.035em; margin-top: 6px; }
 .c9-ccd-hero__line span { color: #4285F4; }
 .c9-ccd-hero__meta { font-size: 13px; color: var(--yy-text-muted); }
+
+/* a11y (#23): visible keyboard focus for any control without its own focus style (zero specificity, so component styles win). */
+:where(a, button, [role="button"], [tabindex]):focus-visible { outline: 2px solid var(--yy-primary); outline-offset: 2px; }

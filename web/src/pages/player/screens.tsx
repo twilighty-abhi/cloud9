@@ -1,6 +1,6 @@
 // Participant room screens, rendered from the server PlayerSnapshot. One action per screen.
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { PlayerSnapshot, ClientMsg } from '../../../../shared/protocol';
 import { useTick } from '../../lib/ws';
 import type { ConnStatus } from '../../lib/ws';
@@ -33,6 +33,18 @@ export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike 
 
   const myChoice = snap.myAnswer ? snap.myAnswer.choice : picked && q && picked.qIndex === q.qIndex ? picked.choice : null;
 
+  // a11y (#23): move focus to the new screen's heading when the screen changes (not on first load),
+  // so screen readers read it and keyboard users continue from the top of the new content.
+  const screenKey = `${snap.state}-${q ? q.qIndex : -1}`;
+  const firstScreen = useRef(true);
+  useEffect(() => {
+    if (firstScreen.current) { firstScreen.current = false; return; }
+    const h = document.querySelector<HTMLElement>('.c9-p-screen h1');
+    if (!h) return;
+    h.setAttribute('tabindex', '-1');
+    try { h.focus({ preventScroll: true }); } catch { /* */ }
+  }, [screenKey]);
+
   let body;
   let tone: string | undefined;
   switch (snap.state) {
@@ -49,9 +61,33 @@ export function RoomView({ snap, conn }: { snap: PlayerSnapshot; conn: ConnLike 
   }
   return (
     <LiveShell title={snap.title} score={snap.me.score} status={conn.status} tone={tone}>
-      <div class="c9-p-screen" key={`${snap.state}-${q ? q.qIndex : -1}`}>{body}</div>
+      <p class="c9-sr" role="status" aria-live="polite" aria-atomic="true">{announce(snap, myChoice)}</p>
+      <div class="c9-p-screen" key={screenKey}>{body}</div>
     </LiveShell>
   );
+}
+
+/** One short sentence for the polite live region (#23): what just changed on screen. */
+export function announce(snap: PlayerSnapshot, myChoice: number | null): string {
+  const q = snap.question;
+  const rank = snap.me.rank ? ` You're number ${snap.me.rank} of ${snap.playerCount}.` : '';
+  switch (snap.state) {
+    case 'LOBBY': return "You're in. Waiting for the host to start.";
+    case 'QUESTION':
+      if (!q) return "You're in. Waiting for the host to start.";
+      return myChoice !== null ? `Answer ${LETTERS[myChoice]} locked in.` : `Question ${q.qIndex + 1} of ${q.total}.`;
+    case 'CLOSED': return myChoice !== null ? 'Answers closed. Waiting for the reveal.' : "Time's up. Answers closed.";
+    case 'REVEAL': {
+      const r = snap.reveal;
+      const ci = r ? r.correctIndex : -1;
+      const right = q && ci >= 0 && q.options[ci] !== undefined ? ` The correct answer was ${LETTERS[ci]}: ${q.options[ci]}.` : '';
+      if (r?.correct) return `Correct! Plus ${fmtNum(r.points)} points.${rank}`;
+      return `${snap.myAnswer ? 'Not quite.' : 'No answer.'}${right}${rank}`;
+    }
+    case 'LEADERBOARD': return `Leaderboard.${rank}`;
+    case 'FINISHED': return `Final results.${rank} You scored ${fmtNum(snap.me.score)} points.`;
+  }
+  return '';
 }
 
 function Lobby({ snap }: { snap: PlayerSnapshot }) {
@@ -80,12 +116,20 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
   const locked = myChoice !== null;
   const timeUp = remaining <= 0 && !locked;
   const urgent = secs <= 5;
+  // a11y (#23): the tapped button becomes disabled, which drops keyboard focus to <body>; keep it on the "Locked in" note.
+  const lockedRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!locked) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && !(a instanceof HTMLButtonElement && a.disabled)) return;
+    try { lockedRef.current?.focus({ preventScroll: true }); } catch { /* */ }
+  }, [locked]);
 
   return (
     <div class="c9-p-q">
       <div class="c9-p-q__meta">
         <span class="c9-overline">Question {q.qIndex + 1} of {q.total}</span>
-        <span class={`c9-p-timer ${urgent ? 'c9-p-timer--urgent' : ''}`} aria-label={`${secs} seconds left`}>
+        <span class={`c9-p-timer ${urgent ? 'c9-p-timer--urgent' : ''}`} role="timer" aria-label={`${secs} seconds left`}>
           <IconClock size={16} />{secs}s
         </span>
       </div>
@@ -116,7 +160,7 @@ function Question({ snap, conn, myChoice, onAnswer }: { snap: PlayerSnapshot; co
             })}
           </div>
           {locked && (
-            <p class="c9-p-locked" role="status">
+            <p class="c9-p-locked" ref={lockedRef} tabIndex={-1}>
               <IconLock size={18} />
               <span><strong>Locked in.</strong> {snap.myAnswer ? 'Waiting for the others…' : 'Sending…'}</span>
             </p>
@@ -267,7 +311,8 @@ function Finished({ snap }: { snap: PlayerSnapshot }) {
   return (
     <div class="c9-p-fin">
       <div class="c9-p-fin__me">
-        <span class="c9-overline">Final results</span>
+        <h1 class="c9-sr">Final results</h1>
+        <span class="c9-overline" aria-hidden="true">Final results</span>
         {rank !== null ? (
           <>
             <p class="c9-p-fin__rank">#{rank}</p>
