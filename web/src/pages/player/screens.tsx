@@ -21,8 +21,9 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 export function RoomView({ snap, conn, onNotMe }: { snap: PlayerSnapshot; conn: ConnLike; onNotMe?: () => void }) {
   const [picked, setPicked] = useState<Picked>(null);
   const [fail, setFail] = useState<AnswerFail>(null);
+  const [serverHas, setServerHas] = useState<number | null>(null); // qIndex the server says we already answered
   const q = snap.question;
-  const awaitingAck = !!picked && !snap.myAnswer && snap.state === 'QUESTION' && !!q && q.qIndex === picked.qIndex;
+  const awaitingAck = !!picked && !snap.myAnswer && snap.state === 'QUESTION' && !!q && q.qIndex === picked.qIndex && serverHas !== picked.qIndex;
 
   // A server error after a tap means the answer did not count (#20). Errors that arrived before the tap are ignored.
   const errSeen = useRef(conn.lastError);
@@ -31,7 +32,7 @@ export function RoomView({ snap, conn, onNotMe }: { snap: PlayerSnapshot; conn: 
     if (!e || e === errSeen.current) return;
     errSeen.current = e;
     if (!awaitingAck || !picked) return;
-    if (e.code === 'already_answered') return; // the server has an answer from us; keep "Locked in"
+    if (e.code === 'already_answered') { setServerHas(picked.qIndex); return; } // the server has an answer from us; keep "Locked in"
     setPicked(null);
     setFail({ qIndex: picked.qIndex, kind: e.code === 'too_late' ? 'late' : 'failed' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
