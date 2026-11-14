@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { Me, PublicSession, QuizDef, SessionSummary, EventDef, EventListItem, EventDetail, PublicEventBoard, SessionPatch } from '../../../shared/api';
 import type { RegisterRoutes, RouteDeps, SessionRow } from '../contracts';
 import { COOKIE_NAME, SESSION_TTL_MS } from '../auth/index';
+import { parseIntEnv } from '../config';
 import { createRateLimiter } from '../util/rateLimit';
 import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
@@ -27,10 +28,7 @@ const CODE_RE = /^\d{6}$/;
 const PUBLIC_CACHE_MS = 2000;
 const QR_CACHE_MAX = 2000;
 
-function envInt(name: string, def: number): number {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
-}
+const envInt = (name: string, def: number): number => parseIntEnv(name, process.env[name], def);
 
 const loginSchema = z.object({ username: z.string().max(64), password: z.string().max(512) });
 const createSessionSchema = z.object({

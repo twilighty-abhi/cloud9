@@ -34,8 +34,36 @@ export function parseModerators(raw: string): ModeratorConfig[] {
     });
 }
 
+/**
+ * Integer env var with a fallback: unset/empty → `def`; non-numeric or outside [min, max] → warn and use `def`.
+ * (Previously e.g. MAX_PLAYERS_PER_ROOM=abc became NaN and silently disabled the room cap.)
+ */
+export function parseIntEnv(name: string, raw: string | undefined, def: number, min = 1, max = Number.MAX_SAFE_INTEGER): number {
+  if (raw === undefined || raw.trim() === '') return def;
+  const n = Number(raw.trim());
+  if (!Number.isFinite(n) || n < min || n > max) {
+    console.warn(`[config] ${name}="${raw}" is not a number in ${min}..${max} — using ${def}`);
+    return def;
+  }
+  return Math.floor(n);
+}
+
+export const MIN_PROD_SECRET_LEN = 32;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const port = Number(env.PORT ?? 3000);
+  const production = env.NODE_ENV === 'production';
+  // Fail closed: in production never fall back to the dev admin:admin account or a weak/missing session secret.
+  if (production) {
+    const problems: string[] = [];
+    if (!(env.MODERATORS ?? '').trim()) problems.push('MODERATORS is not set (format: user:password[:super],...)');
+    if ((env.SESSION_SECRET ?? '').length < MIN_PROD_SECRET_LEN) {
+      problems.push(`SESSION_SECRET must be at least ${MIN_PROD_SECRET_LEN} characters (generate with: openssl rand -hex 32)`);
+    }
+    if (problems.length) {
+      throw new Error(`[config] Refusing to start with NODE_ENV=production: ${problems.join('; ')}. Set them in .env and restart.`);
+    }
+  }
+  const port = parseIntEnv('PORT', env.PORT, 3000, 1, 65535);
   const publicUrl = (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/+$/, '');
   const moderators = parseModerators(env.MODERATORS ?? 'admin:admin:super');
   if (!env.MODERATORS) console.warn('[config] MODERATORS not set — using admin:admin (dev only!)');
@@ -51,7 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.DB_PATH ?? resolve('data/cloud9.db'),
     sessionSecret,
     moderators,
-    maxPlayersPerRoom: Number(env.MAX_PLAYERS_PER_ROOM ?? 500),
+    maxPlayersPerRoom: parseIntEnv('MAX_PLAYERS_PER_ROOM', env.MAX_PLAYERS_PER_ROOM, 500),
     webDist: env.WEB_DIST ?? resolve('dist/web'),
     secureCookies: publicUrl.startsWith('https://'),
     telegram: parseTelegram(env),
