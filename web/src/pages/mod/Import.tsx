@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import type { Me, ImportReq } from '../../../../shared/api';
 import type { QuizDef, EmailMode, ScoringMode } from '../../../../shared/model';
 import { navigate } from '../../lib/router';
@@ -22,6 +22,7 @@ export function Import(props: { me: Me; onLogout: () => void }) {
   const [emailMode, setEmailMode] = useState<EmailMode>('optional');
   const [scoring, setScoring] = useState<ScoringMode>('speed');
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false); // ref guard: two clicks in one task both see busy=false (state updates are async)
   const [err, setErr] = useState<string | null>(null);
 
   const content = mode === 'file' ? fileText : paste;
@@ -41,12 +42,14 @@ export function Import(props: { me: Me; onLogout: () => void }) {
     e.preventDefault();
     if (!title.trim()) { setErr('Give the quiz a title.'); return; }
     if (!content.trim()) { setErr(mode === 'file' ? 'Choose a .csv or .json file first.' : 'Paste your CSV or JSON first.'); return; }
+    if (inflight.current) return;
+    inflight.current = true;
     setBusy(true); setErr(null);
     try {
       const body: ImportReq = { eventId, title: title.trim(), format: fmt, content, emailMode, scoring };
       const q = await mutate<QuizDef>('POST', '/api/quizzes/import', body);
       navigate(`/mod/quiz/${fixture ? 'q1' : q.id}`);
-    } catch (e2) { setErr(apiErrMsg(e2)); setBusy(false); }
+    } catch (e2) { inflight.current = false; setErr(apiErrMsg(e2)); setBusy(false); }
   };
 
   const rows = content.trim() ? (fmt === 'csv' ? Math.max(0, content.trim().split(/\r?\n/).length - 1) : null) : null;

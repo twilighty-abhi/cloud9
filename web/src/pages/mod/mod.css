@@ -151,7 +151,7 @@
 .c9-m-lobby__txt strong { font-size: 20px; }
 .c9-m-q { display: flex; gap: var(--space-4); align-items: flex-start; }
 .c9-m-q__img { width: 120px; height: 90px; object-fit: cover; border-radius: var(--radius-md); background: var(--yy-bg-muted); flex: none; }
-.c9-m-q__text { font-family: var(--font-display); font-weight: 800; font-size: clamp(20px, 2.2vw, 26px); line-height: 1.25; letter-spacing: -0.01em; }
+.c9-m-q__text { font-family: var(--font-display); font-weight: 800; font-size: clamp(20px, 2.2vw, 26px); line-height: 1.25; letter-spacing: -0.01em; min-width: 0; overflow-wrap: anywhere; }
 .c9-m-opts2 { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 @media (max-width: 720px) { .c9-m-opts2 { grid-template-columns: 1fr; } }
 .c9-m-opt2 { display: flex; gap: var(--space-3); align-items: flex-start; border: 1px solid var(--yy-border); border-radius: var(--radius-md); padding: 12px; background: var(--yy-bg-canvas); }
@@ -195,9 +195,9 @@
 
 /* next preview */
 .c9-m-next { border: 1.5px dashed var(--yy-border-strong); border-radius: var(--radius-lg); padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
-.c9-m-next__q { font-weight: 700; font-size: 16px; }
+.c9-m-next__q { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
 .c9-m-next__opts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--yy-text-secondary); }
-.c9-m-next__opts li { display: inline-flex; align-items: center; gap: 6px; }
+.c9-m-next__opts li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .c9-m-next__opts li.is-correct { color: var(--yy-text); font-weight: 700; }
 .c9-m-tick { color: var(--yy-success-fg); font-weight: 800; }
 
@@ -215,6 +215,7 @@
   .c9-m-join__info { align-items: flex-start; flex: 1; }
 }
 
+.c9-m-finished { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
 .c9-m-settingscard { display: flex; flex-direction: column; gap: 4px; padding: 16px 20px; }
 .c9-m-settingscard .yy-field { margin-bottom: var(--space-2); }
 .c9-m-saved { font-size: 12px; font-weight: 700; color: var(--yy-success-fg); margin-left: 6px; }

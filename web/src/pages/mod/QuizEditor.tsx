@@ -50,6 +50,7 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const saving = useRef(false); // ref guard: two clicks in one task both see busy=false (state updates are async)
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
   const { events, error: evErr } = useEvents();
@@ -84,6 +85,8 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
     const v = validate(draft);
     setErrors(v);
     if (v.length) { requestAnimationFrame(() => document.getElementById('c9-editor-errors')?.scrollIntoView({ behavior: 'smooth', block: 'center' })); return; }
+    if (saving.current) return;
+    saving.current = true;
     setBusy(true);
     try {
       const body = toInput(draft);
@@ -92,7 +95,7 @@ export function QuizEditor(props: { id: string | null; me: Me; onLogout: () => v
       if (!props.id && q?.id && !fixture) navigate(`/mod/quiz/${q.id}`, true);
       else if (q?.questions) setDraft(fromQuiz(q));
     } catch (e) { setErrors([apiErrMsg(e)]); }
-    finally { setBusy(false); }
+    finally { saving.current = false; setBusy(false); }
   };
 
   if (loadErr) {
