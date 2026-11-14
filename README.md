@@ -108,6 +108,8 @@ curl -s localhost:3000/healthz          # rooms / sockets / rssMb
 - **Player can't join ("rate limited")**: wait a minute; `JOIN_RATE_PER_MIN` joins/min per IP (default 1000). A whole venue behind one NAT is
   fine for normal arrival rates, but if a proxy is misconfigured every player shares the proxy's IP. Check that the
   Nginx config sets `X-Forwarded-For`.
+- **Screens keep reconnecting ("Too many connections")**: more than `WS_MAX_PER_IP` (default 1500) sockets from one IP,
+  or `WS_MAX_TOTAL` (default 20000) overall. Same NAT/proxy caveat as above; raise the value in `.env` if a venue really needs it.
 - **Moderator laptop dies**: log in on any device, open the same room from the dashboard, carry on.
   Several mod devices on one room is allowed.
 - **A room looks frozen**: moderator reloads the room page (fresh snapshot). If a question is stuck open,
@@ -143,4 +145,6 @@ Setup (BotFather, finding user / group / topic ids, all `TELEGRAM_*` variables, 
 
 All settings are in `.env` (see `.env.example`): `PUBLIC_URL`, `SESSION_SECRET`, `MODERATORS`
 (`user:pass[:super],…`), `MAX_PLAYERS_PER_ROOM` (default 500), `LOG_LEVEL`, `DOMAIN` (Caddy only).
+Abuse limits (all per client IP, sized for a venue behind one NAT): `JOIN_RATE_PER_MIN` (1000), `LOGIN_RATE_PER_MIN`,
+`WS_MAX_PER_IP` (1500 sockets), `WS_MAX_TOTAL` (20000 sockets overall), `PLAY_LOOKUP_RATE_PER_MIN` (600 failed room-code lookups/min).
 `PORT`, `DB_PATH`, `WEB_DIST` are fixed inside the container. Optional Telegram bot: `TELEGRAM_*` (see [docs/TELEGRAM.md](docs/TELEGRAM.md)).

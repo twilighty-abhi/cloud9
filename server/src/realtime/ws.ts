@@ -7,6 +7,8 @@ import type { AuthService } from '../contracts';
 import type { Registry } from '../game/registry';
 import { sha256Hex } from '../game/registry';
 import type { PlayerMem, Room } from '../game/room';
+import { clientIpFromRaw } from '../util/clientIp';
+import { createFailureLimiter } from '../util/failureLimiter';
 import { parseClientMsg } from './schema';
 import { sendError, sendMsg, safeClose } from './send';
 
@@ -14,6 +16,27 @@ const HEARTBEAT_MS = 20_000;
 const MAX_MISSED_PONGS = 2;
 const RATE_PER_SEC = 20;
 const MAX_PAYLOAD = 4096;
+// Connection caps. A whole venue shares ONE public IP (NAT), so the per-IP cap must stay far above the
+// largest expected audience; it exists to stop a single client opening thousands of sockets.
+const DEFAULT_MAX_PER_IP = 1500;
+const DEFAULT_MAX_TOTAL = 20_000;
+// Failed room lookups (unknown code) per IP per minute before that IP gets 4429 for a minute.
+const DEFAULT_LOOKUP_FAILS_PER_MIN = 600;
+
+function envInt(name: string, def: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
+}
+
+export interface RealtimeOptions {
+  heartbeatMs?: number;
+  /** Max concurrent sockets per client IP (env WS_MAX_PER_IP, default 1500). */
+  maxPerIp?: number;
+  /** Max concurrent sockets in total (env WS_MAX_TOTAL, default 20000). */
+  maxTotal?: number;
+  /** Failed room lookups per IP per minute (env PLAY_LOOKUP_RATE_PER_MIN, default 600). */
+  lookupFailsPerMin?: number;
+}
 
 interface Ctx {
   ws: WebSocket;
@@ -29,10 +52,15 @@ interface Ctx {
 
 export interface Realtime { close(): void }
 
-export function attachRealtime(server: Server, auth: AuthService, registry: Registry, opts: { heartbeatMs?: number } = {}): Realtime {
+export function attachRealtime(server: Server, auth: AuthService, registry: Registry, opts: RealtimeOptions = {}): Realtime {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_PAYLOAD, clientTracking: false });
   const live = new Set<Ctx>();
   let shuttingDown = false;
+  const maxPerIp = opts.maxPerIp ?? envInt('WS_MAX_PER_IP', DEFAULT_MAX_PER_IP);
+  const maxTotal = opts.maxTotal ?? envInt('WS_MAX_TOTAL', DEFAULT_MAX_TOTAL);
+  const lookupFails = createFailureLimiter({ max: opts.lookupFailsPerMin ?? envInt('PLAY_LOOKUP_RATE_PER_MIN', DEFAULT_LOOKUP_FAILS_PER_MIN), windowMs: 60_000 });
+  const perIp = new Map<string, number>();
+  let total = 0;
 
   wss.on('error', (e) => console.error('[ws] server error', e));
 
@@ -51,10 +79,31 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
     }
     socket.on('error', () => { /* swallow; socket destroyed below or by ws */ });
     if (shuttingDown) { socket.destroy(); return; }
+    const ip = clientIpFromRaw(req);
+    const overCap = total >= maxTotal || (perIp.get(ip) ?? 0) >= maxPerIp;
+    if (!overCap) {
+      // Counted from upgrade until the underlying TCP socket closes (covers half-finished handshakes too).
+      total++;
+      perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
+      let released = false;
+      socket.once('close', () => {
+        if (released) return;
+        released = true;
+        total--;
+        const n = (perIp.get(ip) ?? 1) - 1;
+        if (n <= 0) perIp.delete(ip); else perIp.set(ip, n);
+      });
+    }
     try {
       wss.handleUpgrade(req, socket, head, (ws) => {
         try {
-          onConnection(ws, req, url);
+          if (overCap) {
+            ws.on('error', () => { /* handled by close */ });
+            sendError(ws, 'rate_limited', 'Too many connections');
+            safeClose(ws, WS_CLOSE.RATE_LIMITED, 'too_many_connections');
+            return;
+          }
+          onConnection(ws, req, url, ip);
         } catch (e) {
           console.error('[ws] connection setup failed', e);
           safeClose(ws, 1011, 'error');
@@ -67,12 +116,18 @@ export function attachRealtime(server: Server, auth: AuthService, registry: Regi
   };
   server.on('upgrade', onUpgrade);
 
-  function onConnection(ws: WebSocket, req: IncomingMessage, url: URL): void {
+  function onConnection(ws: WebSocket, req: IncomingMessage, url: URL, ip: string): void {
     ws.on('error', () => { /* handled by close */ });
     const role = url.searchParams.get('role');
     const code = url.searchParams.get('code') ?? '';
+    if (lookupFails.blocked(ip)) {
+      sendError(ws, 'rate_limited', 'Too many unknown room codes, please wait a minute');
+      safeClose(ws, WS_CLOSE.RATE_LIMITED, 'rate_limited');
+      return;
+    }
     const room = /^\d{6}$/.test(code) ? registry.get(code) : null;
     if (!room) {
+      lookupFails.fail(ip);
       sendError(ws, 'not_found', 'Room not found');
       safeClose(ws, WS_CLOSE.NOT_FOUND, 'not_found');
       return;
