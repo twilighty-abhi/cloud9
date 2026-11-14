@@ -45,6 +45,12 @@ Update to a new version: `git pull && docker compose up -d --build`. Live rooms 
 
 Resource limits (compose): 2 GB RAM, 2 CPUs, Node heap up to 1.5 GB (real use ~130 MB at 250 players), logs rotated at 10 MB × 3.
 
+Hardening (compose): no Linux capabilities, `no-new-privileges`, read-only root filesystem (writable: `/data` and a
+64 MB `/tmp` tmpfs), 256 pids, 20 s stop grace period (HTTP/WS close → answers flushed → Telegram drain ≤ 5 s → DB
+closed). Base images are pinned by digest in the `Dockerfile`. The app creates files with umask 027, so new DB files
+are not world-readable; for files created before this change run once: `sudo chmod 750 data && sudo chmod 640 data/cloud9.db*`.
+An uncaught exception now exits the process (exit 1) and Docker restarts it; live rooms are restored from SQLite.
+
 ## Creating quizzes
 
 Log in at `/mod`, then either build a quiz in the editor or **Import** a CSV/JSON file

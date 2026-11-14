@@ -22,6 +22,17 @@ services:
       - ./data:/data
     mem_limit: 2g
     cpus: 2.0
+    pids_limit: 256
+    # Hardening: no Linux capabilities (port 3000 > 1024, runs as uid 1000), no setuid escalation, read-only root fs.
+    # Writable: /data (bind mount) and /tmp (tmpfs, also SQLite's temp dir).
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # SIGTERM → close HTTP/WS, flush answers, Telegram drain (≤5 s), close DB. Docker's default 10 s is too tight.
+    stop_grace_period: 20s
     ports:
       # Reachable only from the host (Nginx/Caddy on the host proxies to it).
       # For quick testing on http://<server-ip>:3000 change to "3000:3000" (revert afterwards).
@@ -35,7 +46,7 @@ services:
     logging: *logging
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     profiles: ["caddy"]
     restart: unless-stopped
     depends_on:

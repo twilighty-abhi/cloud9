@@ -1,8 +1,11 @@
 # Cloud 9 — production image
 # Debian slim (glibc) rather than alpine: better-sqlite3 ships prebuilt glibc binaries.
+# Base image pinned by digest (multi-arch index of node:22.23.4-bookworm-slim, published 2026-11-05) so rebuilds and
+# rollbacks get the same runtime. To update: pick a newer node:22.x.y-bookworm-slim tag and replace tag + digest
+# (docker buildx imagetools inspect node:22.x.y-bookworm-slim → top-level Digest).
 
 # ───────────── builder ─────────────
-FROM node:22-bookworm-slim AS builder
+FROM node:22.23.4-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d AS builder
 WORKDIR /app
 
 # Toolchain only used if better-sqlite3 has to compile from source (prebuilt download failed).
@@ -22,7 +25,7 @@ RUN npm run build \
  && npm prune --omit=dev
 
 # ───────────── runtime ─────────────
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
 WORKDIR /app
 
 ENV NODE_ENV=production \

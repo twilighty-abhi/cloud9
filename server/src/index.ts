@@ -9,8 +9,10 @@ import { createAuth } from './auth/index';
 import { createGame } from './game/index';
 import { registerRoutes } from './http/index';
 import { startTelegram } from './notify/index';
+import { runShutdown } from './shutdown';
 
 async function main() {
+  process.umask(0o027); // DB, -wal/-shm and exports in /data: not world-readable on the host
   const config = loadConfig();
   mkdirSync(dirname(config.dbPath), { recursive: true });
 
@@ -58,15 +60,22 @@ async function main() {
   const shutdown = async (sig: string) => {
     if (closing) return; closing = true;
     console.log(`[cloud9] ${sig} — shutting down`);
-    try { await telegram?.stop(); } catch (e) { console.error(e); }
-    try { game.shutdown(); } catch (e) { console.error(e); }
-    try { await app.close(); } catch (e) { console.error(e); }
-    try { repo.close(); } catch (e) { console.error(e); }
+    await runShutdown({
+      closeHttp: () => app.close(),
+      shutdownGame: () => game.shutdown(),
+      closeRepo: () => repo.close(),
+      stopTelegram: telegram ? () => telegram.stop() : null,
+    });
     process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('uncaughtException', (e) => console.error('[cloud9] uncaughtException', e));
+  // Unknown state after an uncaught exception: flush what we have and exit; Docker restarts us and rooms restore from SQLite.
+  process.on('uncaughtException', (e) => {
+    console.error('[cloud9] uncaughtException — exiting', e);
+    try { repo.flush(); } catch { /* ignore */ }
+    process.exit(1);
+  });
   process.on('unhandledRejection', (e) => console.error('[cloud9] unhandledRejection', e));
 }
 
