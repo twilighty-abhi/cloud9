@@ -66,7 +66,10 @@ export function EventPage(props: { id: string; me: Me; onLogout: () => void }) {
             <div class="yy-empty">No quizzes yet. Every hall moderator can add their quiz here — scores from all of them add up on the event leaderboard.</div>
           ) : (
             <ul class="c9-m-list">
-              {detail.quizzes.map((q) => <QuizRow key={q.id} q={q} me={props.me} />)}
+              {detail.quizzes.map((q) => <QuizRow key={q.id} q={q} me={props.me} onDeleted={(id) => {
+                setDetail((d) => (d ? { ...d, quizzes: d.quizzes.filter((x) => x.id !== id) } : d));
+                if (!fixture) reload();
+              }} />)}
             </ul>
           )}
         </section>
@@ -197,10 +200,19 @@ function EventHead({ ev, canEdit, onSaved, liveCount }: { ev: EventDef; canEdit:
 
 // ───────────────────────── quizzes ─────────────────────────
 
-function QuizRow({ q, me }: { q: QuizListItem; me: Me }) {
+function QuizRow({ q, me, onDeleted }: { q: QuizListItem; me: Me; onDeleted: (id: string) => void }) {
   const [start, setStart] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const mine = q.moderatorId === me.id;
   const canEdit = mine || me.isSuper;
+  // same confirm text as the dashboard's standalone-quiz Delete
+  const remove = async () => {
+    if (deleting) return;
+    if (!confirm(`Delete “${q.title}”? This can't be undone. Results of past sessions stay downloadable.`)) return;
+    setDeleting(true);
+    try { await mutate('DELETE', `/api/quizzes/${encodeURIComponent(q.id)}`); onDeleted(q.id); }
+    catch (e) { setDeleting(false); alert(apiErrMsg(e)); }
+  };
   return (
     <li class="c9-m-row c9-m-row--quiz">
       <div class="c9-m-row__main">
@@ -213,6 +225,7 @@ function QuizRow({ q, me }: { q: QuizListItem; me: Me }) {
       {!mine && <div class="c9-m-row__chips"><Chip tone="neutral" title="Added by another moderator">Another moderator</Chip></div>}
       <div class="c9-m-row__actions">
         {canEdit && <Link class="yy-btn yy-btn--quiet yy-btn--sm" href={`/mod/quiz/${q.id}`}>Edit</Link>}
+        {canEdit && <button class="yy-btn yy-btn--danger-quiet yy-btn--sm" disabled={deleting} onClick={remove}>{deleting ? 'Deleting…' : 'Delete'}</button>}
         <button class="yy-btn yy-btn--secondary yy-btn--sm" aria-expanded={start} onClick={() => setStart(!start)}>Start session</button>
       </div>
       {start && <StartForm quiz={q} onCancel={() => setStart(false)} />}
