@@ -80,6 +80,7 @@ const JOIN_ERRORS: Record<string, [number, string]> = {
   invalid_name: [400, 'Please enter a valid name (1–24 characters)'],
   invalid_email: [400, 'Please enter a valid email address'],
   kicked: [403, 'You were removed from this quiz'],
+  email_in_use: [409, 'This email is already playing on another device. Close it there first, or ask the host.'],
 };
 
 export const registerRoutes: RegisterRoutes = async (app: FastifyInstance, deps: RouteDeps) => {

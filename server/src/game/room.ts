@@ -10,6 +10,7 @@ import type { Repo, SessionRow, PlayerRow, AnswerRow } from '../contracts';
 import { sendRaw, sendMsg, safeClose } from '../realtime/send';
 import { bus } from '../notify/bus';
 
+const WS_OPEN = 1; // WebSocket.OPEN
 const DELTA_INTERVAL_MS = 250; // max 4 deltas / s / room
 const PLAYER_TOP = 3;           // players see only the top 3 of the quiz / event boards
 const EVENT_BOARD_REUSE_MS = 2000; // single-socket sends (connect/reconnect) reuse the last event board for this long
@@ -129,10 +130,24 @@ export class Room {
     return kicked;
   }
 
-  /** Rejoin by email: register a fresh token for an existing player (the previous token keeps working in memory). */
+  /** Number of this player's sockets that are currently OPEN. */
+  openSocketCount(p: PlayerMem): number {
+    let n = 0;
+    for (const ws of p.sockets) if (ws.readyState === WS_OPEN) n++;
+    return n;
+  }
+
+  /**
+   * Rejoin by email: replace the player's token. The previous token stops working (it can no longer open a socket)
+   * and any lingering (non-open) sockets bound to it are terminated; their close handlers detach them.
+   */
   rebindToken(p: PlayerMem, tokenHash: string): void {
+    if (this.byToken.get(p.tokenHash) === p) this.byToken.delete(p.tokenHash);
     p.tokenHash = tokenHash;
     this.byToken.set(tokenHash, p);
+    for (const ws of p.sockets) {
+      try { ws.terminate(); } catch { /* ignore */ }
+    }
   }
 
   /** Event identity key for a player (matches repo.eventLeaderboard keys). */

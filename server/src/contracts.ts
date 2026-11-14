@@ -126,7 +126,7 @@ export interface AuthService {
 
 export type JoinResult =
   | { ok: true; playerId: string; token: string; name: string; rejoined: boolean }
-  | { ok: false; error: 'not_found' | 'finished' | 'join_closed' | 'room_full' | 'email_required' | 'invalid_name' | 'invalid_email' | 'kicked' };
+  | { ok: false; error: 'not_found' | 'finished' | 'join_closed' | 'room_full' | 'email_required' | 'invalid_name' | 'invalid_email' | 'kicked' | 'email_in_use' };
 
 export interface GameRegistry {
   /** Creates a room in LOBBY with a fresh unique 6-digit code; persists via repo.insertSession. */
