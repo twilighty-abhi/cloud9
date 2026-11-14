@@ -11,6 +11,7 @@ import { csvRow, slugify } from '../util/csv';
 import { newId } from '../util/id';
 import { buildExportCsv } from './exportCsv';
 import { bus } from '../notify/bus';
+import { parseLabel } from '../notify/actions';
 import type { NotifyEvent } from '../notify/contracts';
 import {
   ImportError,
@@ -290,14 +291,16 @@ function buildRoutes(api: FastifyInstance, deps: RouteDeps) {
   api.post('/api/sessions', async (req, reply) => {
     const me = requireMe(req);
     const body = parse(createSessionSchema, req.body);
-    const quiz = loadOwnedQuiz(me, body.quizId);
+    const quiz = loadOwnedQuiz(me, body.quizId); // owner or super, else 403
     if (quiz.questions.length < 1) fail(400, 'invalid_input', 'Quiz has no questions');
     const event = quiz.eventId ? repo.getEvent(quiz.eventId) : null;
     const summary = registry.createSession({
       quiz,
       event,
-      moderatorId: me.id,
-      label: body.label?.trim().slice(0, 60) ?? '',
+      // The room always belongs to the quiz owner (a super moderator starting a hall's quiz must not lock the hall out).
+      moderatorId: quiz.moderatorId,
+      // No label given → same default as Telegram /newsession ("Hall 3 · 2:00 PM" from the title, or '').
+      label: body.label?.trim().slice(0, 60) || parseLabel(quiz.title),
       listed: body.listed ?? true,
     });
     publicCache = null;
