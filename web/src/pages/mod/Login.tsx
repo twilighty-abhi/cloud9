@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import type { Me } from '../../../../shared/api';
 import { HttpError } from '../../lib/api';
 import { fixture, fxMeOr, mutate, errMsg, Logo } from './common';
@@ -7,18 +7,21 @@ export function Login(props: { onIn: (me: Me) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false); // ref guard: two clicks in one task both see busy=false (state updates are async)
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: Event) => {
     e.preventDefault();
     if (!username.trim() || !password) { setError('Enter your username and password.'); return; }
+    if (inflight.current) return;
+    inflight.current = true;
     setBusy(true); setError(null);
     try {
       const me = await mutate<Me>('POST', '/api/auth/login', { username: username.trim(), password });
       props.onIn(fixture ? fxMeOr() : me);
     } catch (err) {
       setError(err instanceof HttpError && err.status === 401 ? "That username and password don't match. Check them and try again." : errMsg(err));
-    } finally { setBusy(false); }
+    } finally { inflight.current = false; setBusy(false); }
   };
 
   return (

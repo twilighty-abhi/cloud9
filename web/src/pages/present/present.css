@@ -55,7 +55,7 @@
 .c9-pr-ring > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 800; font-size: calc(5 * var(--u)); font-variant-numeric: tabular-nums; }
 .c9-pr-ring.is-low > span { color: var(--yy-accent-text); }
 .c9-pr-q__body { display: flex; align-items: center; gap: calc(4 * var(--u)); min-height: calc(18 * var(--u)); }
-.c9-pr-q__text { font-size: calc(6.4 * var(--u)); line-height: 1.12; letter-spacing: -0.02em; flex: 1; min-width: 0;
+.c9-pr-q__text { font-size: calc(6.4 * var(--u)); line-height: 1.12; letter-spacing: -0.02em; flex: 1; min-width: 0; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .c9-pr-q__text.is-long { font-size: calc(4.6 * var(--u)); -webkit-line-clamp: 4; }
 .c9-pr-q__img { max-height: calc(24 * var(--u)); max-width: 30%; border-radius: calc(2 * var(--u)); object-fit: contain; }

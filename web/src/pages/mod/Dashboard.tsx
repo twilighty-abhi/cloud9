@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Me, CreateSessionReq, EventInput } from '../../../../shared/api';
 import type { QuizListItem, SessionSummary, EventListItem, EventDef } from '../../../../shared/model';
 import { navigate } from '../../lib/router';
@@ -184,17 +184,20 @@ function NewEventForm({ onCancel }: { onCancel: () => void }) {
   const [name, setName] = useState('');
   const [emailRequired, setEmailRequired] = useState(true);
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false); // ref guard: two clicks in one task both see busy=false (state updates are async)
   const [err, setErr] = useState<string | null>(null);
   const submit = async (e: Event) => {
     e.preventDefault();
     const n = name.trim();
     if (!n) { setErr('Give the event a name.'); return; }
+    if (inflight.current) return;
+    inflight.current = true;
     setBusy(true); setErr(null);
     try {
       const body: EventInput = { name: n, emailRequired };
       const ev = await mutate<EventDef>('POST', '/api/events', body);
       navigate(`/mod/event/${ev.id ?? 'ev1'}`);
-    } catch (e2) { setErr(apiErrMsg(e2)); setBusy(false); }
+    } catch (e2) { inflight.current = false; setErr(apiErrMsg(e2)); setBusy(false); }
   };
   return (
     <form class="c9-m-startform c9-m-evform" onSubmit={submit}>
@@ -250,16 +253,19 @@ export function StartForm({ quiz, onCancel }: { quiz: QuizListItem; onCancel: ()
   const [label, setLabel] = useState('');
   const [listed, setListed] = useState(true);
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false); // ref guard: two clicks in one task both see busy=false (state updates are async)
   const [err, setErr] = useState<string | null>(null);
 
   const submit = async (e: Event) => {
     e.preventDefault();
+    if (inflight.current) return;
+    inflight.current = true;
     setBusy(true); setErr(null);
     try {
       const body: CreateSessionReq = { quizId: quiz.id, label: label.trim(), listed };
       const s = await mutate<SessionSummary>('POST', '/api/sessions', body);
       navigate(`/mod/room/${s.code ?? '482913'}`);
-    } catch (e2) { setErr(errMsg(e2)); setBusy(false); }
+    } catch (e2) { inflight.current = false; setErr(errMsg(e2)); setBusy(false); }
   };
 
   return (

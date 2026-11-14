@@ -137,6 +137,8 @@ function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
       if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      // a focused control (End quiz, ×, a switch, a link) keeps its own keys; only the primary button maps to the shortcut
+      if (t?.closest?.('button,a,[role=switch],[role=button]') && !t.closest('.c9-m-primary')) return;
       e.preventDefault();
       primaryRef.current();
     };
@@ -192,8 +194,8 @@ function Panel({ conn, snap }: { conn: Conn; snap: HostSnapshot }) {
           )}
         </main>
         <aside class="c9-m-room__side">
-          <JoinCard snap={snap} />
-          <SettingsCard snap={snap} onError={showToast} />
+          {snap.state === 'FINISHED' ? <FinishedCard snap={snap} /> : <JoinCard snap={snap} />}
+          <SettingsCard snap={snap} onError={showToast} finished={snap.state === 'FINISHED'} />
           <PlayersCard snap={snap} onKick={(id, name) => {
             if (!confirm(`Remove ${name} from this room? They won't be able to rejoin with the same entry.`)) return;
             if (!conn.send({ t: 'kick', playerId: id })) showToast("Not connected — reconnecting. Try again in a moment.");
@@ -436,7 +438,18 @@ function JoinCard({ snap }: { snap: HostSnapshot }) {
   );
 }
 
-function SettingsCard({ snap, onError }: { snap: HostSnapshot; onError: (m: string) => void }) {
+/** Replaces the QR/join card once the quiz is over: nothing left to join. */
+function FinishedCard({ snap }: { snap: HostSnapshot }) {
+  return (
+    <section class="yy-card c9-m-finished" aria-label="Quiz finished">
+      <h3 class="c9-m-h4">Quiz finished</h3>
+      <p class="c9-muted c9-m-small">{fmtNum(snap.playerCount)} player{snap.playerCount === 1 ? '' : 's'} took part. Joining is closed.</p>
+      <a class="yy-btn yy-btn--secondary" href={`/api/sessions/${snap.code}/export.csv`} download>Download results CSV</a>
+    </section>
+  );
+}
+
+function SettingsCard({ snap, onError, finished }: { snap: HostSnapshot; onError: (m: string) => void; finished: boolean }) {
   const [label, setLabel] = useState(snap.label);
   const [editing, setEditing] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
@@ -489,8 +502,10 @@ function SettingsCard({ snap, onError }: { snap: HostSnapshot; onError: (m: stri
             if (e.key === 'Escape') { setLabel(snap.label); setEditing(false); (e.target as HTMLInputElement).blur(); }
           }} />
       </div>
-      <Switch label="Show on home page" hint={listed ? 'Listed for everyone on the home page' : 'Hidden — join by QR or code only'} checked={listed} onChange={(v) => toggle('listed', v)} />
-      <Switch label="Joining open" hint={joinOpen ? 'New players can join' : 'New players are turned away'} checked={joinOpen} onChange={(v) => toggle('joinOpen', v)} />
+      {!finished && <>
+        <Switch label="Show on home page" hint={listed ? 'Listed for everyone on the home page' : 'Hidden — join by QR or code only'} checked={listed} onChange={(v) => toggle('listed', v)} />
+        <Switch label="Joining open" hint={joinOpen ? 'New players can join' : 'New players are turned away'} checked={joinOpen} onChange={(v) => toggle('joinOpen', v)} />
+      </>}
     </section>
   );
 }
